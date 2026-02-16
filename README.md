@@ -11,7 +11,7 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 - OS: Debian 12 Bookworm (`i386`)
 - User: `ludovic`
 - Server IP: `192.168.1.50`
-- Main panel pages: Dashboard, Services, Files, Terminal, Network, Speedtest, Packages, Scheduler, Logs, Changelog
+- Main panel pages: Dashboard, Services, Files, Movies, Terminal, Network, Speedtest, Packages, Scheduler, Logs, Changelog
 - Auth model: session-based login with password stored in `config.py` (`PASSWORD`)
 
 ## Features
@@ -20,6 +20,7 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 - **Monitoring Charts** - Last-hour CPU, RAM, disk I/O, and network bandwidth history (in-memory, lightweight)
 - **Service Manager** - List, start, stop, restart systemd services, view logs
 - **File Manager** - Browse, upload, download, delete, and create files/folders
+- **Movies** - Local movie browser with OMDb metadata lookup/cache, streaming, and integrated Transmission download controls
 - **System Terminal** - Execute commands with shortcut buttons, persistent history, copy/clear output
 - **Network Info** - IP, MAC, gateway, DNS, ping tests, active connections
 - **Internet Speedtest** - Run download/upload/latency tests from the server and inspect raw output
@@ -35,6 +36,7 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 - 2GB RAM (panel uses ~20-30MB)
 - SSH access
 - Optional for Speedtest tab: `speedtest` CLI or `speedtest-cli`
+- Optional for Movies tab: an [OMDb API key](https://www.omdbapi.com/apikey.aspx) stored in `~/.mini-control-omdb-key`
 
 ## Installation
 

@@ -43,10 +43,8 @@ STATS_THREAD_STARTED = False
 
 MOVIES_ROOT = Path('/home/ludovic/movies')
 MOVIE_METADATA_CACHE_FILE = MOVIES_ROOT / '.metadata_cache.json'
-TMDB_KEY_FILE = Path(os.path.expanduser('~/.mini-control-tmdb-key'))
-TMDB_API_BASE = 'https://api.themoviedb.org/3'
-TMDB_POSTER_BASE_URL = 'https://image.tmdb.org/t/p/w500'
-TMDB_BACKDROP_BASE_URL = 'https://image.tmdb.org/t/p/w1280'
+OMDB_KEY_FILE = Path(os.path.expanduser('~/.mini-control-omdb-key'))
+OMDB_API_BASE = 'http://www.omdbapi.com/'
 TRANSMISSION_RPC_URL = 'http://localhost:9091/transmission/rpc'
 
 VIDEO_EXTENSIONS = {'.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.flv', '.webm'}
@@ -880,27 +878,27 @@ def resolve_movie_path(relative_path):
     return candidate
 
 
-def load_tmdb_key():
-    """Load TMDB API key from ~/.mini-control-tmdb-key."""
+def load_omdb_key():
+    """Load OMDb API key from ~/.mini-control-omdb-key."""
     try:
-        if TMDB_KEY_FILE.exists():
-            return TMDB_KEY_FILE.read_text(encoding='utf-8', errors='replace').strip()
+        if OMDB_KEY_FILE.exists():
+            return OMDB_KEY_FILE.read_text(encoding='utf-8', errors='replace').strip()
     except Exception:
         return ''
     return ''
 
 
-def save_tmdb_key(api_key):
-    """Persist TMDB API key to ~/.mini-control-tmdb-key."""
+def save_omdb_key(api_key):
+    """Persist OMDb API key to ~/.mini-control-omdb-key."""
     key = (api_key or '').strip()
     try:
         if not key:
-            if TMDB_KEY_FILE.exists():
-                TMDB_KEY_FILE.unlink()
-            return True, 'TMDB API key removed'
-        TMDB_KEY_FILE.write_text(key + '\n', encoding='utf-8')
-        os.chmod(str(TMDB_KEY_FILE), 0o600)
-        return True, 'TMDB API key saved'
+            if OMDB_KEY_FILE.exists():
+                OMDB_KEY_FILE.unlink()
+            return True, 'OMDb API key removed'
+        OMDB_KEY_FILE.write_text(key + '\n', encoding='utf-8')
+        os.chmod(str(OMDB_KEY_FILE), 0o600)
+        return True, 'OMDb API key saved'
     except Exception as exc:
         return False, str(exc)
 
@@ -987,126 +985,164 @@ def parse_movie_filename(filename):
     return title_hint or stem, year_hint
 
 
-def tmdb_image_url(path_fragment, base_url):
-    """Build TMDB image URL from poster/backdrop path."""
-    if not path_fragment:
-        return ''
-    return f'{base_url}{path_fragment}'
-
-
-def extract_release_year(date_text):
-    """Extract year from YYYY-MM-DD date text."""
-    if not date_text:
+def extract_year_from_text(value):
+    """Extract a 4-digit year from common OMDb year/date strings."""
+    if not value:
+        return None
+    match = re.search(r'(19\d{2}|20\d{2})', str(value))
+    if not match:
         return None
     try:
-        return int(str(date_text)[:4])
+        return int(match.group(1))
     except Exception:
         return None
 
 
-def tmdb_request(path, params=None):
-    """Perform a GET request against TMDB API."""
-    api_key = load_tmdb_key()
+def parse_runtime_minutes(runtime_text):
+    """Parse OMDb runtime like '142 min' into integer minutes."""
+    if not runtime_text:
+        return None
+    match = re.search(r'(\d+)\s*min', str(runtime_text), re.IGNORECASE)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except Exception:
+        return None
+
+
+def split_comma_field(value):
+    """Split comma-separated OMDb fields into a list."""
+    if not value or str(value).strip().lower() == 'n/a':
+        return []
+    return [part.strip() for part in str(value).split(',') if part.strip()]
+
+
+def normalize_omdb_poster(value):
+    """Normalize OMDb poster URL ('N/A' -> empty string)."""
+    poster = str(value or '').strip()
+    if not poster or poster.upper() == 'N/A':
+        return ''
+    return poster
+
+
+def parse_omdb_rating(value):
+    """Parse OMDb imdbRating into float or None."""
+    rating_raw = str(value or '').strip()
+    if not rating_raw or rating_raw.upper() == 'N/A':
+        return None
+    try:
+        return round(float(rating_raw), 1)
+    except Exception:
+        return None
+
+
+def omdb_request(params=None):
+    """Perform a GET request against OMDb API."""
+    api_key = load_omdb_key()
     if not api_key:
-        return None, 'TMDB API key is not configured'
+        return None, 'OMDb API key is not configured'
 
     request_params = dict(params or {})
-    request_params['api_key'] = api_key
+    request_params['apikey'] = api_key
 
     try:
-        response = http_requests.get(
-            f'{TMDB_API_BASE}{path}',
-            params=request_params,
-            timeout=15
-        )
+        response = http_requests.get(OMDB_API_BASE, params=request_params, timeout=15)
     except http_requests.RequestException as exc:
-        return None, f'TMDB request failed: {exc}'
+        return None, f'OMDb request failed: {exc}'
 
-    if response.status_code == 401:
-        return None, 'TMDB API key is invalid'
     if response.status_code >= 400:
-        return None, f'TMDB API returned HTTP {response.status_code}'
+        return None, f'OMDb API returned HTTP {response.status_code}'
 
     try:
-        return response.json(), None
+        payload = response.json()
     except Exception:
-        return None, 'TMDB returned invalid JSON'
+        return None, 'OMDb returned invalid JSON'
+
+    if str(payload.get('Response', 'True')).lower() == 'false':
+        error_message = str(payload.get('Error') or 'OMDb query failed').strip()
+        if 'invalid api key' in error_message.lower():
+            return None, 'OMDb API key is invalid'
+        return None, error_message
+
+    return payload, None
 
 
-def select_tmdb_result(results, year_hint=None):
-    """Pick the best TMDB search result with optional year hint."""
+def select_omdb_search_result(results, year_hint=None):
+    """Pick the best OMDb search result with an optional year hint."""
     if not results:
         return None
 
     def score(result):
-        value = float(result.get('popularity') or 0.0)
-        result_year = extract_release_year(result.get('release_date', ''))
+        value = 0
+        result_year = extract_year_from_text(result.get('Year', ''))
         if year_hint and result_year == year_hint:
-            value += 1000
+            value += 100
         elif year_hint and result_year and abs(result_year - year_hint) <= 1:
-            value += 200
+            value += 20
+        if normalize_omdb_poster(result.get('Poster')):
+            value += 1
         return value
 
     return max(results, key=score)
 
 
-def normalize_tmdb_metadata(search_item, details_item):
-    """Build normalized movie metadata payload from TMDB objects."""
-    base = details_item or search_item or {}
-    title = base.get('title') or (search_item or {}).get('title') or ''
-    release_date = base.get('release_date') or (search_item or {}).get('release_date') or ''
-    year = extract_release_year(release_date)
-    genres = []
-    for genre in base.get('genres') or []:
-        name = str(genre.get('name', '')).strip()
-        if name:
-            genres.append(name)
-
+def normalize_omdb_metadata(payload):
+    """Map OMDb movie details to the app's metadata structure."""
+    poster_url = normalize_omdb_poster(payload.get('Poster'))
     return {
-        'tmdb_id': base.get('id') or (search_item or {}).get('id'),
-        'title': title.strip(),
-        'year': year,
-        'overview': (base.get('overview') or '').strip(),
-        'rating': round(float(base.get('vote_average') or (search_item or {}).get('vote_average') or 0.0), 1),
-        'genres': genres,
-        'runtime': base.get('runtime') if isinstance(base.get('runtime'), int) else None,
-        'poster_url': tmdb_image_url(base.get('poster_path') or (search_item or {}).get('poster_path'), TMDB_POSTER_BASE_URL),
-        'backdrop_url': tmdb_image_url(base.get('backdrop_path') or (search_item or {}).get('backdrop_path'), TMDB_BACKDROP_BASE_URL),
-        'release_date': release_date,
-        'vote_count': int(base.get('vote_count') or (search_item or {}).get('vote_count') or 0),
+        'imdb_id': str(payload.get('imdbID') or '').strip(),
+        'title': str(payload.get('Title') or '').strip(),
+        'year': extract_year_from_text(payload.get('Year')),
+        'overview': str(payload.get('Plot') or '').strip() if str(payload.get('Plot') or '').upper() != 'N/A' else '',
+        'rating': parse_omdb_rating(payload.get('imdbRating')),
+        'genres': split_comma_field(payload.get('Genre')),
+        'runtime': parse_runtime_minutes(payload.get('Runtime')),
+        'poster_url': poster_url,
+        # OMDb does not provide backdrops. Reuse poster for hero background when available.
+        'backdrop_url': poster_url,
+        'director': str(payload.get('Director') or '').strip() if str(payload.get('Director') or '').upper() != 'N/A' else '',
+        'actors': split_comma_field(payload.get('Actors')),
+        'content_rating': str(payload.get('Rated') or '').strip() if str(payload.get('Rated') or '').upper() != 'N/A' else '',
     }
 
 
-def fetch_tmdb_metadata(title_hint, year_hint=None):
-    """Search TMDB and return metadata for a single movie."""
+def fetch_omdb_metadata(title_hint, year_hint=None):
+    """Search OMDb and return metadata for a single movie."""
     if not title_hint:
         return None, 'Could not infer movie title from filename'
 
-    search_payload, error = tmdb_request('/search/movie', {
-        'query': title_hint,
-        'include_adult': 'false',
-        'language': 'en-US',
-        'page': 1,
-    })
+    # 1) Try direct title (+optional year), best case = 1 request.
+    details_params = {'t': title_hint}
+    if year_hint:
+        details_params['y'] = str(year_hint)
+    details_payload, details_error = omdb_request(details_params)
+    if details_payload:
+        return normalize_omdb_metadata(details_payload), None
+
+    # 2) Fallback search, then resolve via imdbID.
+    search_payload, search_error = omdb_request({'s': title_hint, 'type': 'movie'})
+    if search_error:
+        if 'not found' in search_error.lower():
+            return None, 'No OMDb match found for this filename'
+        return None, search_error or details_error or 'No OMDb match found for this filename'
+
+    results = (search_payload or {}).get('Search') or []
+    if not results:
+        return None, 'No OMDb match found for this filename'
+
+    selected = select_omdb_search_result(results, year_hint=year_hint)
+    if not selected:
+        return None, 'No OMDb match found for this filename'
+
+    imdb_id = str(selected.get('imdbID') or '').strip()
+    if not imdb_id:
+        return None, 'OMDb search result missing IMDb ID'
+
+    details_payload, error = omdb_request({'i': imdb_id})
     if error:
         return None, error
-
-    results = (search_payload or {}).get('results') or []
-    if not results:
-        return None, 'No TMDB match found for this filename'
-
-    selected = select_tmdb_result(results, year_hint=year_hint)
-    if not selected:
-        return None, 'No TMDB match found for this filename'
-
-    details_payload = None
-    movie_id = selected.get('id')
-    if movie_id:
-        details_payload, details_error = tmdb_request(f'/movie/{movie_id}', {'language': 'en-US'})
-        if details_error:
-            details_payload = None
-
-    return normalize_tmdb_metadata(selected, details_payload), None
+    return normalize_omdb_metadata(details_payload), None
 
 
 def build_movie_record(relative_path, file_path, stat_result, cache_entry):
@@ -1136,7 +1172,10 @@ def build_movie_record(relative_path, file_path, stat_result, cache_entry):
         'runtime': runtime,
         'poster_url': metadata.get('poster_url') or '',
         'backdrop_url': metadata.get('backdrop_url') or '',
-        'tmdb_id': metadata.get('tmdb_id'),
+        'imdb_id': metadata.get('imdb_id') or '',
+        'director': metadata.get('director') or '',
+        'actors': metadata.get('actors') if isinstance(metadata.get('actors'), list) else [],
+        'content_rating': metadata.get('content_rating') or '',
         'file_size_bytes': int(stat_result.st_size),
         'file_size_human': format_bytes(stat_result.st_size),
         'file_path': str(file_path),
@@ -1194,7 +1233,7 @@ def load_movies_index():
                     'title_guess': title_hint,
                     'year_guess': year_hint,
                     'metadata': metadata,
-                    'tmdb_updated_at': existing_entry.get('tmdb_updated_at') or '',
+                    'omdb_updated_at': existing_entry.get('omdb_updated_at') or '',
                 }
 
                 if existing_entry != new_entry:
@@ -1229,7 +1268,7 @@ def update_single_movie_cache(relative_path, metadata, title_hint, year_hint, si
             'title_guess': title_hint,
             'year_guess': year_hint,
             'metadata': metadata or {},
-            'tmdb_updated_at': datetime.now().isoformat(timespec='seconds'),
+            'omdb_updated_at': datetime.now().isoformat(timespec='seconds'),
         }
         cache['updated_at'] = datetime.now().isoformat(timespec='seconds')
         save_movie_metadata_cache(cache)
@@ -1721,7 +1760,7 @@ def movies():
     return render_template(
         'movies.html',
         movies_root=str(MOVIES_ROOT),
-        tmdb_key_set=bool(load_tmdb_key()),
+        omdb_key_set=bool(load_omdb_key()),
         transmission_installed=transmission_is_installed(),
         transmission_running=check_service('transmission-daemon'),
     )
@@ -1745,7 +1784,7 @@ def movies_api_list():
     return jsonify({
         'movies': movies_list,
         'count': len(movies_list),
-        'tmdb_key_set': bool(load_tmdb_key()),
+        'omdb_key_set': bool(load_omdb_key()),
         'movies_root': str(MOVIES_ROOT),
     })
 
@@ -1763,12 +1802,12 @@ def movies_api_metadata(filename):
 
     relative_path = str(movie_path.relative_to(MOVIES_ROOT))
     title_hint, year_hint = parse_movie_filename(movie_path.name)
-    metadata, error = fetch_tmdb_metadata(title_hint, year_hint=year_hint)
+    metadata, error = fetch_omdb_metadata(title_hint, year_hint=year_hint)
     if error:
         status_code = 502
         if 'not configured' in error.lower() or 'invalid' in error.lower():
             status_code = 400
-        elif 'no tmdb match' in error.lower() or 'could not infer' in error.lower():
+        elif 'no omdb match' in error.lower() or 'could not infer' in error.lower():
             status_code = 404
         return jsonify({'error': error}), status_code
 
@@ -1799,36 +1838,46 @@ def movies_api_search():
     if not query:
         return jsonify({'results': []})
 
-    if not load_tmdb_key():
-        return jsonify({'error': 'TMDB API key is not configured'}), 400
+    if not load_omdb_key():
+        return jsonify({'error': 'OMDb API key is not configured'}), 400
 
-    payload, error = tmdb_request('/search/movie', {
-        'query': query,
-        'include_adult': 'false',
-        'language': 'en-US',
-        'page': 1,
+    payload, error = omdb_request({
+        's': query,
+        'type': 'movie',
     })
     if error:
+        if 'not found' in error.lower():
+            return jsonify({'results': []})
         status_code = 502
         if 'not configured' in error.lower() or 'invalid' in error.lower():
             status_code = 400
         return jsonify({'error': error}), status_code
 
     results = []
-    for item in (payload or {}).get('results') or []:
-        title = (item.get('title') or '').strip()
+    for item in (payload or {}).get('Search') or []:
+        title = str(item.get('Title') or '').strip()
         if not title:
             continue
-        year = extract_release_year(item.get('release_date'))
-        rating = round(float(item.get('vote_average') or 0.0), 1)
+        year = extract_year_from_text(item.get('Year'))
+        imdb_id = str(item.get('imdbID') or '').strip()
+        rating = None
+        overview = ''
+        if imdb_id:
+            details_payload, details_error = omdb_request({'i': imdb_id})
+            if not details_error and details_payload:
+                rating = parse_omdb_rating(details_payload.get('imdbRating'))
+                plot = str(details_payload.get('Plot') or '').strip()
+                if plot and plot.upper() != 'N/A':
+                    overview = plot
         torrent_query = f'{title} {year or ""} 1080p torrent magnet'.strip()
         google_url = 'https://www.google.com/search?q=' + urllib.parse.quote_plus(torrent_query)
         results.append({
             'title': title,
             'year': year,
             'rating': rating,
-            'poster_url': tmdb_image_url(item.get('poster_path'), TMDB_POSTER_BASE_URL),
-            'overview': (item.get('overview') or '').strip(),
+            'imdb_id': imdb_id,
+            'poster_url': normalize_omdb_poster(item.get('Poster')),
+            'overview': overview,
             'google_url': google_url,
         })
         if len(results) >= 20:
@@ -1877,14 +1926,14 @@ def movies_delete():
 @login_required
 def movies_settings():
     data = request_payload()
-    tmdb_key = str(data.get('tmdb_key', '')).strip()
-    ok, message = save_tmdb_key(tmdb_key)
+    omdb_key = str(data.get('omdb_key', '')).strip()
+    ok, message = save_omdb_key(omdb_key)
     if not ok:
         return jsonify({'error': message}), 500
     return jsonify({
         'status': 'ok',
         'message': message,
-        'tmdb_key_set': bool(load_tmdb_key()),
+        'omdb_key_set': bool(load_omdb_key()),
     })
 
 

@@ -74,6 +74,7 @@ echo ""
 IP=$(hostname -I | awk '{print $1}')
 echo "Control Panel URL: http://${IP}:5000"
 echo "Default password:  minilinux2006"
+echo "OMDb key file:     /home/ludovic/.mini-control-omdb-key (optional, for Movies metadata)"
 echo ""
 echo "Service status:"
 sudo systemctl status mini-control.service --no-pager -l

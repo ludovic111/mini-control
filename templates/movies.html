@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Movies - Mini Control{% endblock %}
 {% block page_title %}Movies{% endblock %}
-{% block page_subtitle %}Browse your local movie collection, enrich metadata via TMDB, and control Transmission downloads{% endblock %}
+{% block page_subtitle %}Browse your local movie collection, enrich metadata via OMDb, and control Transmission downloads{% endblock %}
 
 {% block content %}
 <style>
@@ -526,23 +526,23 @@
     color: #fff;
 }
 
-.tmdb-modal-body {
+.omdb-modal-body {
     padding: 1rem;
 }
 
-.tmdb-modal-body p {
+.omdb-modal-body p {
     color: var(--m-text-muted);
     font-size: 0.87rem;
     margin-bottom: 0.7rem;
 }
 
-.tmdb-form {
+.omdb-form {
     display: grid;
     grid-template-columns: 1fr auto;
     gap: 0.56rem;
 }
 
-.tmdb-hint {
+.omdb-hint {
     margin-top: 0.56rem;
     color: var(--m-text-muted);
     font-size: 0.78rem;
@@ -595,27 +595,27 @@
         <div class="movies-hero-head">
             <div>
                 <h2>Search movies to download</h2>
-                <p>Search TMDB, then use the quick "Find Torrent" link to open a legal search in a new tab.</p>
+                <p>Search OMDb, then use the quick "Find Torrent" link to open a legal search in a new tab.</p>
             </div>
             <div class="movies-actions">
-                <button type="button" class="movies-btn movies-btn-muted" id="open-tmdb-settings-btn">&#9881; TMDB Key</button>
+                <button type="button" class="movies-btn movies-btn-muted" id="open-omdb-settings-btn">&#9881; OMDb Key</button>
                 <button type="button" class="movies-btn movies-btn-primary" id="refresh-all-btn">Refresh Library</button>
             </div>
         </div>
-        <form id="tmdb-search-form" class="movies-search-form">
-            <input type="text" id="tmdb-search-input" class="movies-input" placeholder="Search title, e.g. Interstellar" autocomplete="off">
+        <form id="omdb-search-form" class="movies-search-form">
+            <input type="text" id="omdb-search-input" class="movies-input" placeholder="Search title, e.g. Interstellar" autocomplete="off">
             <button type="submit" class="movies-btn movies-btn-primary">Search</button>
         </form>
-        <div id="tmdb-search-status" class="movies-status"></div>
-        <div id="tmdb-search-results" class="search-results-row"></div>
+        <div id="omdb-search-status" class="movies-status"></div>
+        <div id="omdb-search-results" class="search-results-row"></div>
     </section>
 
-    <div id="tmdb-key-banner" class="movies-alert" style="display:none;">
+    <div id="omdb-key-banner" class="movies-alert" style="display:none;">
         <div>
-            <strong>TMDB key missing</strong>
-            <span>Add your TMDB API key to unlock posters, ratings, metadata, and remote movie search.</span>
+            <strong>OMDb key missing</strong>
+            <span>Add your OMDb API key to unlock posters, ratings, metadata, and remote movie search.</span>
         </div>
-        <button type="button" class="movies-btn movies-btn-primary" id="banner-open-settings-btn">Set TMDB Key</button>
+        <button type="button" class="movies-btn movies-btn-primary" id="banner-open-settings-btn">Set OMDb Key</button>
     </div>
 
     <section class="movies-panel movies-library">
@@ -698,21 +698,25 @@
     </div>
 </div>
 
-<div id="tmdb-modal" class="movie-modal" role="dialog" aria-modal="true" aria-label="TMDB settings">
+<div id="omdb-modal" class="movie-modal" role="dialog" aria-modal="true" aria-label="OMDb settings">
     <div class="movie-modal-dialog" style="max-width:640px;">
-        <button type="button" class="movies-btn movies-btn-muted modal-close" id="tmdb-modal-close">&times;</button>
-        <div class="tmdb-modal-body">
-            <h3>TMDB API Key Settings</h3>
-            <p>The key is saved to <code>~/.mini-control-tmdb-key</code> on the server.</p>
-            <form id="tmdb-form" class="tmdb-form">
-                <input type="password" id="tmdb-key-input" class="movies-input" placeholder="Paste TMDB API key">
+        <button type="button" class="movies-btn movies-btn-muted modal-close" id="omdb-modal-close">&times;</button>
+        <div class="omdb-modal-body">
+            <h3>OMDb API Key Settings</h3>
+            <p>The key is saved to <code>~/.mini-control-omdb-key</code> on the server.</p>
+            <form id="omdb-form" class="omdb-form">
+                <input type="password" id="omdb-key-input" class="movies-input" placeholder="Paste OMDb API key">
                 <button type="submit" class="movies-btn movies-btn-primary">Save Key</button>
             </form>
             <div class="movies-actions" style="margin-top:0.6rem;">
-                <button type="button" class="movies-btn movies-btn-muted" id="tmdb-clear-btn">Clear Key</button>
+                <button type="button" class="movies-btn movies-btn-muted" id="omdb-clear-btn">Clear Key</button>
             </div>
-            <div id="tmdb-settings-status" class="movies-status"></div>
-            <p class="tmdb-hint">Get a key from TMDB account settings. Metadata is cached in <code>/home/ludovic/movies/.metadata_cache.json</code>.</p>
+            <div id="omdb-settings-status" class="movies-status"></div>
+            <p class="omdb-hint">
+                Get a free key at <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener noreferrer">omdbapi.com/apikey.aspx</a>.
+                Free tier limit: 1000 requests/day.
+                Metadata is cached in <code>/home/ludovic/movies/.metadata_cache.json</code>.
+            </p>
         </div>
     </div>
 </div>
@@ -721,7 +725,7 @@
 {% block scripts %}
 <script>
 var MOVIES_ROOT = {{ movies_root|tojson }};
-var tmdbKeySet = {{ tmdb_key_set|tojson }};
+var omdbKeySet = {{ omdb_key_set|tojson }};
 var transmissionInstalled = {{ transmission_installed|tojson }};
 var transmissionRunning = {{ transmission_running|tojson }};
 var movies = [];
@@ -762,9 +766,9 @@ function escapeHtml(value) {
         .replace(/'/g, '&#39;');
 }
 
-function updateTmdbBanner() {
-    var banner = document.getElementById('tmdb-key-banner');
-    banner.style.display = tmdbKeySet ? 'none' : 'flex';
+function updateOmdbBanner() {
+    var banner = document.getElementById('omdb-key-banner');
+    banner.style.display = omdbKeySet ? 'none' : 'flex';
 }
 
 function sortAndFilterMovies() {
@@ -866,7 +870,7 @@ function replaceMovie(updatedMovie) {
 }
 
 function hydrateMissingMetadata() {
-    if (!tmdbKeySet || metadataHydrateRunning) return;
+    if (!omdbKeySet || metadataHydrateRunning) return;
     var queue = movies.filter(function(movie) { return !movie.has_metadata; });
     if (!queue.length) return;
 
@@ -898,18 +902,18 @@ function hydrateMissingMetadata() {
 
 function loadMovies() {
     var sort = document.getElementById('movie-sort-select').value;
-    setStatus('tmdb-search-status', 'Scanning /home/ludovic/movies...');
+    setStatus('omdb-search-status', 'Scanning /home/ludovic/movies...');
     return apiJson('/movies/api/list?sort=' + encodeURIComponent(sort), { cache: 'no-store' })
         .then(function(payload) {
             movies = payload.movies || [];
-            tmdbKeySet = !!payload.tmdb_key_set;
-            updateTmdbBanner();
+            omdbKeySet = !!payload.omdb_key_set;
+            updateOmdbBanner();
             renderMovies();
             hydrateMissingMetadata();
-            setStatus('tmdb-search-status', '');
+            setStatus('omdb-search-status', '');
         })
         .catch(function(err) {
-            setStatus('tmdb-search-status', err.message, true);
+            setStatus('omdb-search-status', err.message, true);
         });
 }
 
@@ -933,6 +937,7 @@ function openMovieModal(movie) {
     meta.push(movie.year ? String(movie.year) : 'Year unknown');
     if (movie.rating) meta.push('\u2605 ' + Number(movie.rating).toFixed(1));
     if (movie.runtime) meta.push(movie.runtime + ' min');
+    if (movie.content_rating) meta.push(movie.content_rating);
     document.getElementById('movie-meta-row').textContent = meta.join(' \u2022 ');
 
     var genreWrap = document.getElementById('movie-genre-pills');
@@ -949,6 +954,8 @@ function openMovieModal(movie) {
     document.getElementById('movie-file-info').innerHTML =
         '<div><strong>Size:</strong> ' + escapeHtml(movie.file_size_human || 'Unknown') + '</div>' +
         '<div><strong>Format:</strong> ' + escapeHtml(movie.format || 'Unknown') + '</div>' +
+        '<div><strong>Director:</strong> ' + escapeHtml(movie.director || 'Unknown') + '</div>' +
+        '<div><strong>Cast:</strong> ' + escapeHtml((movie.actors || []).join(', ') || 'Unknown') + '</div>' +
         '<div><strong>Path:</strong> ' + escapeHtml(movie.file_path || ('/home/ludovic/movies/' + movie.filename)) + '</div>' +
         '<div><strong>Added:</strong> ' + escapeHtml(movie.modified_human || 'Unknown') + '</div>';
 
@@ -974,7 +981,7 @@ function deleteSelectedMovie() {
         movies = movies.filter(function(movie) { return movie.filename !== selectedMovie.filename; });
         closeMovieModal();
         renderMovies();
-        setStatus('tmdb-search-status', 'Deleted ' + label);
+        setStatus('omdb-search-status', 'Deleted ' + label);
     })
     .catch(function(err) {
         alert('Delete failed: ' + err.message);
@@ -992,14 +999,14 @@ function openSelectedMovieFile() {
     window.open('/files/download/' + encodePath(filesPath), '_blank');
 }
 
-function renderTmdbSearchResults(results) {
-    var container = document.getElementById('tmdb-search-results');
+function renderOmdbSearchResults(results) {
+    var container = document.getElementById('omdb-search-results');
     container.innerHTML = '';
     if (!results.length) {
-        setStatus('tmdb-search-status', 'No movie results.');
+        setStatus('omdb-search-status', 'No movie results.');
         return;
     }
-    setStatus('tmdb-search-status', results.length + ' result(s) loaded.');
+    setStatus('omdb-search-status', results.length + ' result(s) loaded.');
 
     results.forEach(function(item) {
         var card = document.createElement('div');
@@ -1031,18 +1038,18 @@ function renderTmdbSearchResults(results) {
     });
 }
 
-function searchTmdb(query) {
-    if (!tmdbKeySet) {
-        setStatus('tmdb-search-status', 'TMDB key is not set. Open settings first.', true);
+function searchOmdb(query) {
+    if (!omdbKeySet) {
+        setStatus('omdb-search-status', 'OMDb key is not set. Open settings first.', true);
         return;
     }
-    setStatus('tmdb-search-status', 'Searching TMDB...');
+    setStatus('omdb-search-status', 'Searching OMDb...');
     apiJson('/movies/api/search?q=' + encodeURIComponent(query), { cache: 'no-store' })
         .then(function(payload) {
-            renderTmdbSearchResults(payload.results || []);
+            renderOmdbSearchResults(payload.results || []);
         })
         .catch(function(err) {
-            setStatus('tmdb-search-status', err.message, true);
+            setStatus('omdb-search-status', err.message, true);
         });
 }
 
@@ -1188,38 +1195,38 @@ function loadTorrents() {
         });
 }
 
-function openTmdbModal() {
-    document.getElementById('tmdb-key-input').value = '';
-    setStatus('tmdb-settings-status', '');
-    document.getElementById('tmdb-modal').classList.add('open');
+function openOmdbModal() {
+    document.getElementById('omdb-key-input').value = '';
+    setStatus('omdb-settings-status', '');
+    document.getElementById('omdb-modal').classList.add('open');
 }
 
-function closeTmdbModal() {
-    document.getElementById('tmdb-modal').classList.remove('open');
+function closeOmdbModal() {
+    document.getElementById('omdb-modal').classList.remove('open');
 }
 
-function saveTmdbKey(keyValue) {
+function saveOmdbKey(keyValue) {
     apiJson('/movies/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tmdb_key: keyValue })
+        body: JSON.stringify({ omdb_key: keyValue })
     })
     .then(function(payload) {
-        tmdbKeySet = !!payload.tmdb_key_set;
-        updateTmdbBanner();
-        setStatus('tmdb-settings-status', payload.message || 'Saved.');
+        omdbKeySet = !!payload.omdb_key_set;
+        updateOmdbBanner();
+        setStatus('omdb-settings-status', payload.message || 'Saved.');
         loadMovies();
     })
     .catch(function(err) {
-        setStatus('tmdb-settings-status', err.message, true);
+        setStatus('omdb-settings-status', err.message, true);
     });
 }
 
-document.getElementById('tmdb-search-form').addEventListener('submit', function(event) {
+document.getElementById('omdb-search-form').addEventListener('submit', function(event) {
     event.preventDefault();
-    var query = document.getElementById('tmdb-search-input').value.trim();
+    var query = document.getElementById('omdb-search-input').value.trim();
     if (!query) return;
-    searchTmdb(query);
+    searchOmdb(query);
 });
 
 document.getElementById('refresh-all-btn').addEventListener('click', function() {
@@ -1277,22 +1284,22 @@ document.getElementById('movie-play-btn').addEventListener('click', playSelected
 document.getElementById('movie-open-file-btn').addEventListener('click', openSelectedMovieFile);
 document.getElementById('movie-delete-btn').addEventListener('click', deleteSelectedMovie);
 
-document.getElementById('open-tmdb-settings-btn').addEventListener('click', openTmdbModal);
-document.getElementById('banner-open-settings-btn').addEventListener('click', openTmdbModal);
-document.getElementById('tmdb-modal-close').addEventListener('click', closeTmdbModal);
-document.getElementById('tmdb-modal').addEventListener('click', function(event) {
-    if (event.target === this) closeTmdbModal();
+document.getElementById('open-omdb-settings-btn').addEventListener('click', openOmdbModal);
+document.getElementById('banner-open-settings-btn').addEventListener('click', openOmdbModal);
+document.getElementById('omdb-modal-close').addEventListener('click', closeOmdbModal);
+document.getElementById('omdb-modal').addEventListener('click', function(event) {
+    if (event.target === this) closeOmdbModal();
 });
 
-document.getElementById('tmdb-form').addEventListener('submit', function(event) {
+document.getElementById('omdb-form').addEventListener('submit', function(event) {
     event.preventDefault();
-    var key = document.getElementById('tmdb-key-input').value.trim();
-    saveTmdbKey(key);
+    var key = document.getElementById('omdb-key-input').value.trim();
+    saveOmdbKey(key);
 });
 
-document.getElementById('tmdb-clear-btn').addEventListener('click', function() {
-    if (!confirm('Remove saved TMDB API key?')) return;
-    saveTmdbKey('');
+document.getElementById('omdb-clear-btn').addEventListener('click', function() {
+    if (!confirm('Remove saved OMDb API key?')) return;
+    saveOmdbKey('');
 });
 
 document.getElementById('downloads-toggle').addEventListener('click', function() {
@@ -1303,11 +1310,11 @@ document.getElementById('downloads-toggle').addEventListener('click', function()
 document.addEventListener('keydown', function(event) {
     if (event.key === 'Escape') {
         closeMovieModal();
-        closeTmdbModal();
+        closeOmdbModal();
     }
 });
 
-updateTmdbBanner();
+updateOmdbBanner();
 loadMovies();
 loadTorrents();
 torrentRefreshTimer = window.setInterval(loadTorrents, 3000);
