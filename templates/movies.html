@@ -1,12 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Movies - Mini Control{% endblock %}
 {% block page_title %}Movies{% endblock %}
-{% block page_subtitle %}Browse your local movie collection, enrich metadata via OMDb, and control Transmission downloads{% endblock %}
+{% block page_subtitle %}Manage local movies in /home/ludovic/movies with OMDb metadata and browser streaming{% endblock %}
 
 {% block content %}
 <style>
 .movies-page {
-    --m-bg: #1a1a2e;
     --m-surface: #16213e;
     --m-surface-soft: #1c2c4f;
     --m-border: rgba(78, 204, 163, 0.24);
@@ -26,47 +25,46 @@
     padding: 1rem;
 }
 
-.movies-hero {
-    padding: 1.3rem;
+.upload-panel {
+    padding: 1.2rem;
     background:
         linear-gradient(125deg, rgba(26, 26, 46, 0.95) 0%, rgba(15, 52, 96, 0.9) 62%, rgba(78, 204, 163, 0.22) 100%),
-        radial-gradient(circle at 12% 20%, rgba(78, 204, 163, 0.22), transparent 45%),
-        radial-gradient(circle at 85% 78%, rgba(233, 69, 96, 0.15), transparent 45%);
+        radial-gradient(circle at 12% 20%, rgba(78, 204, 163, 0.22), transparent 45%);
 }
 
-.movies-hero-head {
+.upload-head {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 0.9rem;
+    gap: 0.75rem;
     flex-wrap: wrap;
 }
 
-.movies-hero h2 {
-    font-size: clamp(1.2rem, 2.2vw, 1.6rem);
+.upload-head h2 {
+    font-size: clamp(1.15rem, 2.1vw, 1.45rem);
     margin-bottom: 0.2rem;
 }
 
-.movies-hero p {
+.upload-head p {
     color: var(--m-text-muted);
-    font-size: 0.95rem;
+    font-size: 0.9rem;
 }
 
 .movies-actions {
     display: flex;
-    gap: 0.55rem;
+    gap: 0.5rem;
     flex-wrap: wrap;
 }
 
 .movies-btn {
     border: 1px solid transparent;
     border-radius: 10px;
-    padding: 0.5rem 0.85rem;
+    padding: 0.48rem 0.85rem;
     font-weight: 600;
     font-size: 0.82rem;
     color: #fff;
     cursor: pointer;
-    transition: transform 0.16s ease, opacity 0.16s ease, box-shadow 0.16s ease;
+    transition: transform 0.16s ease, opacity 0.16s ease;
 }
 
 .movies-btn:hover {
@@ -74,7 +72,7 @@
 }
 
 .movies-btn:disabled {
-    opacity: 0.5;
+    opacity: 0.55;
     cursor: not-allowed;
     transform: none;
 }
@@ -86,7 +84,7 @@
 
 .movies-btn-muted {
     background: rgba(255, 255, 255, 0.14);
-    border-color: rgba(255, 255, 255, 0.18);
+    border-color: rgba(255, 255, 255, 0.2);
 }
 
 .movies-btn-danger {
@@ -97,11 +95,117 @@
     background: var(--m-blue);
 }
 
-.movies-search-form {
-    margin-top: 1rem;
-    display: grid;
-    grid-template-columns: minmax(180px, 1fr) auto;
+.upload-dropzone {
+    margin-top: 0.95rem;
+    border: 2px dashed rgba(78, 204, 163, 0.5);
+    background: rgba(8, 15, 32, 0.45);
+    border-radius: 14px;
+    padding: 1.2rem 0.9rem;
+    text-align: center;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+.upload-dropzone.dragover {
+    border-color: rgba(78, 204, 163, 0.95);
+    background: rgba(15, 31, 52, 0.75);
+}
+
+.upload-dropzone strong {
+    display: block;
+    font-size: 0.98rem;
+    margin-bottom: 0.22rem;
+}
+
+.upload-dropzone p {
+    color: var(--m-text-muted);
+    font-size: 0.84rem;
+}
+
+.upload-controls {
+    margin-top: 0.75rem;
+    display: flex;
+    justify-content: center;
+    align-items: center;
     gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.upload-input {
+    display: none;
+}
+
+.upload-progress-wrap {
+    margin-top: 0.75rem;
+    display: none;
+}
+
+.upload-progress-wrap.active {
+    display: block;
+}
+
+.upload-progress-track {
+    height: 12px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.14);
+    overflow: hidden;
+}
+
+.upload-progress-fill {
+    height: 100%;
+    width: 0;
+    background: linear-gradient(90deg, #4ecca3, #24a680);
+    transition: width 0.18s ease;
+}
+
+.upload-progress-text {
+    margin-top: 0.4rem;
+    color: var(--m-text-muted);
+    font-size: 0.82rem;
+}
+
+.movies-alert {
+    margin-top: 0.9rem;
+    padding: 0.7rem 0.9rem;
+    border-radius: 12px;
+    border: 1px solid rgba(233, 69, 96, 0.38);
+    background: rgba(233, 69, 96, 0.15);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+}
+
+.movies-alert strong {
+    display: block;
+    margin-bottom: 0.15rem;
+}
+
+.movies-alert span {
+    color: var(--m-text-muted);
+    font-size: 0.86rem;
+}
+
+.movies-status {
+    margin-top: 0.7rem;
+    color: var(--m-text-muted);
+    font-size: 0.86rem;
+    min-height: 1.2rem;
+}
+
+.movies-status.error {
+    color: #ffc1cc;
+}
+
+.movies-library {
+    margin-top: 1rem;
+}
+
+.library-toolbar {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) 150px auto auto auto;
+    gap: 0.6rem;
+    align-items: center;
 }
 
 .movies-input,
@@ -116,101 +220,6 @@
 
 .movies-input::placeholder {
     color: rgba(183, 194, 219, 0.72);
-}
-
-.movies-status {
-    margin-top: 0.72rem;
-    color: var(--m-text-muted);
-    font-size: 0.86rem;
-    min-height: 1.25rem;
-}
-
-.movies-status.error {
-    color: #ffc1cc;
-}
-
-.search-results-row {
-    margin-top: 0.95rem;
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: 180px;
-    gap: 0.75rem;
-    overflow-x: auto;
-    padding-bottom: 0.35rem;
-}
-
-.search-card {
-    background: rgba(13, 20, 43, 0.78);
-    border: 1px solid rgba(78, 204, 163, 0.24);
-    border-radius: 12px;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-}
-
-.search-card-poster {
-    height: 250px;
-    background: linear-gradient(150deg, #0f3460, #1a1a2e);
-    background-size: cover;
-    background-position: center;
-}
-
-.search-card-body {
-    padding: 0.6rem;
-}
-
-.search-card-title {
-    font-size: 0.88rem;
-    font-weight: 700;
-    line-height: 1.3;
-    margin-bottom: 0.18rem;
-}
-
-.search-card-meta {
-    font-size: 0.77rem;
-    color: var(--m-text-muted);
-    margin-bottom: 0.45rem;
-}
-
-.search-card a {
-    display: inline-block;
-    width: 100%;
-    text-align: center;
-    text-decoration: none;
-}
-
-.movies-alert {
-    margin-top: 1rem;
-    padding: 0.72rem 0.9rem;
-    border-radius: 12px;
-    border: 1px solid rgba(233, 69, 96, 0.38);
-    background: rgba(233, 69, 96, 0.15);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-}
-
-.movies-alert strong {
-    display: block;
-    margin-bottom: 0.15rem;
-}
-
-.movies-alert span {
-    color: var(--m-text-muted);
-    font-size: 0.86rem;
-}
-
-.movies-library {
-    margin-top: 1rem;
-}
-
-.library-toolbar {
-    display: grid;
-    grid-template-columns: minmax(160px, 1fr) 140px auto auto;
-    gap: 0.6rem;
-    align-items: center;
 }
 
 .movie-count {
@@ -304,108 +313,6 @@
     background: rgba(17, 23, 41, 0.64);
 }
 
-.downloads {
-    margin-top: 1rem;
-}
-
-.downloads-toggle {
-    width: 100%;
-    text-align: left;
-    background: rgba(15, 25, 45, 0.7);
-    border: 1px solid var(--m-border);
-    color: #fff;
-    border-radius: 12px;
-    padding: 0.72rem 0.9rem;
-    font-size: 0.98rem;
-    font-weight: 700;
-    cursor: pointer;
-}
-
-.downloads-content {
-    margin-top: 0.6rem;
-    display: block;
-}
-
-.downloads-content.collapsed {
-    display: none;
-}
-
-.downloads-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 0.7rem;
-    flex-wrap: wrap;
-}
-
-.downloads-meta {
-    color: var(--m-text-muted);
-    font-size: 0.84rem;
-}
-
-.torrent-form {
-    margin-top: 0.8rem;
-    display: grid;
-    grid-template-columns: minmax(180px, 1fr) auto auto;
-    gap: 0.56rem;
-    align-items: center;
-}
-
-.torrent-table-wrap {
-    margin-top: 0.8rem;
-    overflow-x: auto;
-}
-
-.torrent-table {
-    width: 100%;
-    border-collapse: collapse;
-    min-width: 850px;
-    font-size: 0.82rem;
-}
-
-.torrent-table th,
-.torrent-table td {
-    border-bottom: 1px solid rgba(183, 194, 219, 0.2);
-    padding: 0.5rem 0.44rem;
-    text-align: left;
-    vertical-align: middle;
-}
-
-.torrent-progress {
-    width: 100%;
-    min-width: 120px;
-}
-
-.torrent-progress-track {
-    height: 10px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.12);
-    overflow: hidden;
-}
-
-.torrent-progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, #4ecca3, #2ca482);
-    transition: width 0.35s ease;
-}
-
-.torrent-status-pill {
-    display: inline-block;
-    padding: 0.14rem 0.46rem;
-    border-radius: 999px;
-    background: rgba(78, 204, 163, 0.15);
-    border: 1px solid rgba(78, 204, 163, 0.5);
-    color: var(--m-accent);
-    font-size: 0.72rem;
-    font-weight: 700;
-    white-space: nowrap;
-}
-
-.torrent-status-pill.completed {
-    color: #a6f8de;
-    border-color: rgba(166, 248, 222, 0.8);
-}
-
 .movie-modal {
     position: fixed;
     inset: 0;
@@ -447,7 +354,6 @@
         linear-gradient(130deg, #0f3460, #1a1a2e);
     background-size: cover;
     background-position: center;
-    filter: saturate(0.96) contrast(1.02);
 }
 
 .movie-modal-body {
@@ -559,7 +465,7 @@
         grid-template-columns: repeat(3, minmax(0, 1fr));
     }
     .library-toolbar {
-        grid-template-columns: minmax(140px, 1fr) 130px auto;
+        grid-template-columns: minmax(140px, 1fr) 140px auto auto;
     }
     .movie-count {
         justify-self: start;
@@ -567,16 +473,15 @@
 }
 
 @media (max-width: 760px) {
-    .movies-search-form,
-    .torrent-form {
-        grid-template-columns: 1fr;
-    }
     .movie-modal-body {
         grid-template-columns: 1fr;
         margin-top: -44px;
     }
     .movie-modal-poster {
         max-width: 210px;
+    }
+    .omdb-form {
+        grid-template-columns: 1fr;
     }
 }
 
@@ -591,29 +496,41 @@
 </style>
 
 <div class="movies-page">
-    <section class="movies-panel movies-hero">
-        <div class="movies-hero-head">
+    <section class="movies-panel upload-panel">
+        <div class="upload-head">
             <div>
-                <h2>Search movies to download</h2>
-                <p>Search OMDb, then use the quick "Find Torrent" link to open a legal search in a new tab.</p>
+                <h2>Upload Movies</h2>
+                <p>Drag and drop video files to upload directly to <code>/home/ludovic/movies</code>.</p>
             </div>
             <div class="movies-actions">
                 <button type="button" class="movies-btn movies-btn-muted" id="open-omdb-settings-btn">&#9881; OMDb Key</button>
-                <button type="button" class="movies-btn movies-btn-primary" id="refresh-all-btn">Refresh Library</button>
+                <button type="button" class="movies-btn movies-btn-primary" id="scan-library-btn">Scan Library</button>
             </div>
         </div>
-        <form id="omdb-search-form" class="movies-search-form">
-            <input type="text" id="omdb-search-input" class="movies-input" placeholder="Search title, e.g. Interstellar" autocomplete="off">
-            <button type="submit" class="movies-btn movies-btn-primary">Search</button>
-        </form>
-        <div id="omdb-search-status" class="movies-status"></div>
-        <div id="omdb-search-results" class="search-results-row"></div>
+
+        <div id="upload-dropzone" class="upload-dropzone">
+            <strong>Drop video files here</strong>
+            <p>Supported formats: mkv, mp4, avi, m4v, mov, wmv, flv, webm. Max size: 10GB per file.</p>
+            <div class="upload-controls">
+                <button type="button" class="movies-btn movies-btn-primary" id="select-files-btn">Choose Files</button>
+                <input id="upload-file-input" class="upload-input" type="file" accept=".mkv,.mp4,.avi,.m4v,.mov,.wmv,.flv,.webm" multiple>
+            </div>
+        </div>
+
+        <div id="upload-progress-wrap" class="upload-progress-wrap">
+            <div class="upload-progress-track">
+                <div id="upload-progress-fill" class="upload-progress-fill"></div>
+            </div>
+            <div id="upload-progress-text" class="upload-progress-text"></div>
+        </div>
+
+        <div id="upload-status" class="movies-status"></div>
     </section>
 
     <div id="omdb-key-banner" class="movies-alert" style="display:none;">
         <div>
             <strong>OMDb key missing</strong>
-            <span>Add your OMDb API key to unlock posters, ratings, metadata, and remote movie search.</span>
+            <span>Add your OMDb API key to unlock posters, ratings, and metadata refresh for uploaded files.</span>
         </div>
         <button type="button" class="movies-btn movies-btn-primary" id="banner-open-settings-btn">Set OMDb Key</button>
     </div>
@@ -626,52 +543,15 @@
                 <option value="name">Sort: Name</option>
                 <option value="rating">Sort: Rating</option>
             </select>
-            <button type="button" class="movies-btn movies-btn-muted" id="refresh-movies-btn">Rescan Movies</button>
+            <button type="button" class="movies-btn movies-btn-muted" id="refresh-movies-btn">Refresh Grid</button>
+            <button type="button" class="movies-btn movies-btn-muted" id="refresh-metadata-btn">Refresh Missing Metadata</button>
             <div class="movie-count" id="movie-count">0 movies</div>
         </div>
 
+        <div id="library-status" class="movies-status"></div>
         <div id="movies-grid" class="movies-grid"></div>
         <div id="movies-empty" class="movies-empty" style="display:none;">
-            No movies yet. Add some via torrent or drop files in <strong>/home/ludovic/movies</strong>.
-        </div>
-    </section>
-
-    <section class="movies-panel downloads">
-        <button type="button" id="downloads-toggle" class="downloads-toggle">Downloads</button>
-        <div id="downloads-content" class="downloads-content">
-            <div class="downloads-header">
-                <div>
-                    <strong>Transmission Torrent Downloads</strong>
-                    <div class="downloads-meta" id="torrent-service-state">Checking Transmission service...</div>
-                </div>
-                <div class="movies-actions" id="torrent-service-actions"></div>
-            </div>
-
-            <form id="torrent-add-form" class="torrent-form" enctype="multipart/form-data">
-                <input type="text" id="magnet-input" class="movies-input" placeholder="Paste magnet link (magnet:?... )">
-                <input type="file" id="torrent-file-input" class="movies-input" accept=".torrent">
-                <button type="submit" class="movies-btn movies-btn-primary">Add Torrent</button>
-            </form>
-            <div id="torrent-status" class="movies-status"></div>
-
-            <div class="torrent-table-wrap">
-                <table class="torrent-table">
-                    <thead>
-                        <tr>
-                            <th>Name</th>
-                            <th>Progress</th>
-                            <th>Down</th>
-                            <th>Up</th>
-                            <th>ETA</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="torrent-table-body">
-                        <tr><td colspan="7">No torrents loaded.</td></tr>
-                    </tbody>
-                </table>
-            </div>
+            No movies yet. Drop files here or add files via Samba to <strong>/home/ludovic/movies</strong>, then click <strong>Scan Library</strong>.
         </div>
     </section>
 </div>
@@ -702,7 +582,7 @@
     <div class="movie-modal-dialog" style="max-width:640px;">
         <button type="button" class="movies-btn movies-btn-muted modal-close" id="omdb-modal-close">&times;</button>
         <div class="omdb-modal-body">
-            <h3>OMDb API Key Settings</h3>
+            <h3>OMDb API Key</h3>
             <p>The key is saved to <code>~/.mini-control-omdb-key</code> on the server.</p>
             <form id="omdb-form" class="omdb-form">
                 <input type="password" id="omdb-key-input" class="movies-input" placeholder="Paste OMDb API key">
@@ -715,7 +595,7 @@
             <p class="omdb-hint">
                 Get a free key at <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener noreferrer">omdbapi.com/apikey.aspx</a>.
                 Free tier limit: 1000 requests/day.
-                Metadata is cached in <code>/home/ludovic/movies/.metadata_cache.json</code>.
+                Metadata cache: <code>/home/ludovic/movies/.metadata_cache.json</code>.
             </p>
         </div>
     </div>
@@ -724,13 +604,9 @@
 
 {% block scripts %}
 <script>
-var MOVIES_ROOT = {{ movies_root|tojson }};
 var omdbKeySet = {{ omdb_key_set|tojson }};
-var transmissionInstalled = {{ transmission_installed|tojson }};
-var transmissionRunning = {{ transmission_running|tojson }};
 var movies = [];
 var selectedMovie = null;
-var torrentRefreshTimer = null;
 var metadataHydrateRunning = false;
 
 function apiJson(url, options) {
@@ -750,13 +626,6 @@ function encodePath(path) {
     }).join('/');
 }
 
-function setStatus(elementId, message, isError) {
-    var el = document.getElementById(elementId);
-    if (!el) return;
-    el.textContent = message || '';
-    el.classList.toggle('error', !!isError);
-}
-
 function escapeHtml(value) {
     return String(value == null ? '' : value)
         .replace(/&/g, '&amp;')
@@ -764,6 +633,13 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function setStatus(elementId, message, isError) {
+    var el = document.getElementById(elementId);
+    if (!el) return;
+    el.textContent = message || '';
+    el.classList.toggle('error', !!isError);
 }
 
 function updateOmdbBanner() {
@@ -824,8 +700,6 @@ function renderMovies() {
         image.className = 'movie-card-image';
         if (movie.poster_url) {
             image.style.backgroundImage = 'url("' + movie.poster_url + '")';
-        } else if (movie.backdrop_url) {
-            image.style.backgroundImage = 'url("' + movie.backdrop_url + '")';
         } else {
             image.style.backgroundImage = 'linear-gradient(140deg, #0f3460, #1a1a2e)';
         }
@@ -859,6 +733,7 @@ function renderMovies() {
 }
 
 function replaceMovie(updatedMovie) {
+    if (!updatedMovie || !updatedMovie.filename) return;
     var idx = movies.findIndex(function(movie) {
         return movie.filename === updatedMovie.filename;
     });
@@ -870,51 +745,74 @@ function replaceMovie(updatedMovie) {
 }
 
 function hydrateMissingMetadata() {
-    if (!omdbKeySet || metadataHydrateRunning) return;
+    if (!omdbKeySet || metadataHydrateRunning) return Promise.resolve();
     var queue = movies.filter(function(movie) { return !movie.has_metadata; });
-    if (!queue.length) return;
+    if (!queue.length) return Promise.resolve();
 
     metadataHydrateRunning = true;
+    setStatus('library-status', 'Refreshing metadata for new files...');
     var index = 0;
 
-    function next() {
-        if (index >= queue.length) {
-            metadataHydrateRunning = false;
-            renderMovies();
-            return;
-        }
-        var item = queue[index++];
-        apiJson('/movies/api/metadata/' + encodePath(item.filename), { cache: 'no-store' })
-            .then(function(payload) {
-                if (payload.movie) {
-                    replaceMovie(payload.movie);
-                    renderMovies();
-                }
-            })
-            .catch(function() {})
-            .finally(function() {
-                window.setTimeout(next, 220);
-            });
-    }
+    return new Promise(function(resolve) {
+        function next() {
+            if (index >= queue.length) {
+                metadataHydrateRunning = false;
+                renderMovies();
+                setStatus('library-status', 'Metadata refresh completed.');
+                resolve();
+                return;
+            }
 
-    next();
+            var item = queue[index++];
+            apiJson('/movies/api/metadata/' + encodePath(item.filename), { cache: 'no-store' })
+                .then(function(payload) {
+                    if (payload.movie) {
+                        replaceMovie(payload.movie);
+                        renderMovies();
+                    }
+                })
+                .catch(function() {})
+                .finally(function() {
+                    window.setTimeout(next, 180);
+                });
+        }
+        next();
+    });
 }
 
-function loadMovies() {
-    var sort = document.getElementById('movie-sort-select').value;
-    setStatus('omdb-search-status', 'Scanning /home/ludovic/movies...');
-    return apiJson('/movies/api/list?sort=' + encodeURIComponent(sort), { cache: 'no-store' })
+function loadMovies(options) {
+    options = options || {};
+    if (!options.silent) {
+        setStatus('library-status', 'Scanning /home/ludovic/movies...');
+    }
+    return apiJson('/movies/api/list?sort=' + encodeURIComponent(document.getElementById('movie-sort-select').value), { cache: 'no-store' })
         .then(function(payload) {
             movies = payload.movies || [];
             omdbKeySet = !!payload.omdb_key_set;
             updateOmdbBanner();
             renderMovies();
-            hydrateMissingMetadata();
-            setStatus('omdb-search-status', '');
+            if (!options.skipHydrate) {
+                return hydrateMissingMetadata();
+            }
+            setStatus('library-status', 'Library refreshed.');
+            return null;
         })
         .catch(function(err) {
-            setStatus('omdb-search-status', err.message, true);
+            setStatus('library-status', err.message, true);
+            throw err;
         });
+}
+
+function refreshMetadataForFile(filename) {
+    if (!omdbKeySet) return Promise.resolve();
+    return apiJson('/movies/api/metadata/' + encodePath(filename), { cache: 'no-store' })
+        .then(function(payload) {
+            if (payload.movie) {
+                replaceMovie(payload.movie);
+                renderMovies();
+            }
+        })
+        .catch(function() {});
 }
 
 function openMovieModal(movie) {
@@ -922,8 +820,8 @@ function openMovieModal(movie) {
     document.getElementById('movie-modal-title').textContent = movie.display_title || movie.filename;
 
     var backdrop = document.getElementById('movie-modal-backdrop');
-    if (movie.backdrop_url) {
-        backdrop.style.backgroundImage = 'linear-gradient(180deg, rgba(14, 18, 30, 0.25), rgba(14, 18, 30, 0.92)), url("' + movie.backdrop_url + '")';
+    if (movie.poster_url) {
+        backdrop.style.backgroundImage = 'linear-gradient(180deg, rgba(14, 18, 30, 0.25), rgba(14, 18, 30, 0.92)), url("' + movie.poster_url + '")';
     } else {
         backdrop.style.backgroundImage = 'linear-gradient(130deg, #0f3460, #1a1a2e)';
     }
@@ -981,7 +879,7 @@ function deleteSelectedMovie() {
         movies = movies.filter(function(movie) { return movie.filename !== selectedMovie.filename; });
         closeMovieModal();
         renderMovies();
-        setStatus('omdb-search-status', 'Deleted ' + label);
+        setStatus('library-status', 'Deleted ' + label);
     })
     .catch(function(err) {
         alert('Delete failed: ' + err.message);
@@ -997,202 +895,6 @@ function openSelectedMovieFile() {
     if (!selectedMovie) return;
     var filesPath = 'movies/' + selectedMovie.filename;
     window.open('/files/download/' + encodePath(filesPath), '_blank');
-}
-
-function renderOmdbSearchResults(results) {
-    var container = document.getElementById('omdb-search-results');
-    container.innerHTML = '';
-    if (!results.length) {
-        setStatus('omdb-search-status', 'No movie results.');
-        return;
-    }
-    setStatus('omdb-search-status', results.length + ' result(s) loaded.');
-
-    results.forEach(function(item) {
-        var card = document.createElement('div');
-        card.className = 'search-card';
-
-        var poster = document.createElement('div');
-        poster.className = 'search-card-poster';
-        if (item.poster_url) {
-            poster.style.backgroundImage = 'url("' + item.poster_url + '")';
-        }
-
-        var body = document.createElement('div');
-        body.className = 'search-card-body';
-        body.innerHTML =
-            '<div class="search-card-title">' + escapeHtml(item.title || 'Unknown title') + '</div>' +
-            '<div class="search-card-meta">' + escapeHtml(item.year || 'Year ?') + ' \u2022 \u2605 ' + Number(item.rating || 0).toFixed(1) + '</div>';
-
-        var link = document.createElement('a');
-        link.href = item.google_url;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        link.className = 'movies-btn movies-btn-primary';
-        link.textContent = 'Find Torrent';
-        body.appendChild(link);
-
-        card.appendChild(poster);
-        card.appendChild(body);
-        container.appendChild(card);
-    });
-}
-
-function searchOmdb(query) {
-    if (!omdbKeySet) {
-        setStatus('omdb-search-status', 'OMDb key is not set. Open settings first.', true);
-        return;
-    }
-    setStatus('omdb-search-status', 'Searching OMDb...');
-    apiJson('/movies/api/search?q=' + encodeURIComponent(query), { cache: 'no-store' })
-        .then(function(payload) {
-            renderOmdbSearchResults(payload.results || []);
-        })
-        .catch(function(err) {
-            setStatus('omdb-search-status', err.message, true);
-        });
-}
-
-function renderServiceActionButtons() {
-    var holder = document.getElementById('torrent-service-actions');
-    holder.innerHTML = '';
-
-    if (!transmissionInstalled) {
-        var installBtn = document.createElement('button');
-        installBtn.type = 'button';
-        installBtn.className = 'movies-btn movies-btn-primary';
-        installBtn.textContent = 'Install Transmission';
-        installBtn.addEventListener('click', function() {
-            runTorrentServiceAction('install-service');
-        });
-        holder.appendChild(installBtn);
-        return;
-    }
-
-    if (!transmissionRunning) {
-        var startBtn = document.createElement('button');
-        startBtn.type = 'button';
-        startBtn.className = 'movies-btn movies-btn-primary';
-        startBtn.textContent = 'Start Transmission';
-        startBtn.addEventListener('click', function() {
-            runTorrentServiceAction('start-service');
-        });
-        holder.appendChild(startBtn);
-    }
-
-    var restartBtn = document.createElement('button');
-    restartBtn.type = 'button';
-    restartBtn.className = 'movies-btn movies-btn-muted';
-    restartBtn.textContent = 'Restart';
-    restartBtn.addEventListener('click', function() {
-        runTorrentServiceAction('restart-service');
-    });
-    holder.appendChild(restartBtn);
-}
-
-function renderTorrents(torrents) {
-    var body = document.getElementById('torrent-table-body');
-    body.innerHTML = '';
-    if (!torrents.length) {
-        body.innerHTML = '<tr><td colspan="7">No torrents yet.</td></tr>';
-        return;
-    }
-
-    torrents.forEach(function(torrent) {
-        var row = document.createElement('tr');
-        var progress = Number(torrent.progress || 0).toFixed(1);
-        var actionLabel = torrent.status === 'Paused' ? 'Resume' : 'Pause';
-        var actionValue = torrent.status === 'Paused' ? 'resume' : 'pause';
-        if (torrent.is_finished) {
-            actionLabel = 'Pause';
-            actionValue = 'pause';
-        }
-
-        row.innerHTML =
-            '<td>' + escapeHtml(torrent.name) + '</td>' +
-            '<td class="torrent-progress">' +
-                '<div class="torrent-progress-track"><div class="torrent-progress-fill" style="width:' + progress + '%"></div></div>' +
-                '<div style="margin-top:0.2rem;color:#b7c2db;">' + progress + '%</div>' +
-            '</td>' +
-            '<td>' + escapeHtml(torrent.download_speed) + '</td>' +
-            '<td>' + escapeHtml(torrent.upload_speed) + '</td>' +
-            '<td>' + escapeHtml(torrent.eta) + '</td>' +
-            '<td><span class="torrent-status-pill' + (torrent.is_finished ? ' completed' : '') + '">' + (torrent.is_finished ? '\u2713 ' : '') + escapeHtml(torrent.status) + '</span></td>' +
-            '<td>' +
-                '<button class="movies-btn movies-btn-muted" data-action="' + actionValue + '" data-id="' + torrent.id + '" style="padding:0.28rem 0.5rem;font-size:0.74rem;">' + actionLabel + '</button> ' +
-                '<button class="movies-btn movies-btn-danger" data-action="remove" data-id="' + torrent.id + '" style="padding:0.28rem 0.5rem;font-size:0.74rem;">Remove</button>' +
-            '</td>';
-
-        body.appendChild(row);
-    });
-
-    body.querySelectorAll('button[data-action]').forEach(function(button) {
-        button.addEventListener('click', function() {
-            var action = this.getAttribute('data-action');
-            var id = this.getAttribute('data-id');
-            var deleteData = false;
-            if (action === 'remove') {
-                deleteData = confirm('Also delete downloaded data from disk?\nOK = remove data, Cancel = keep files.');
-            }
-            runTorrentAction(action, id, deleteData);
-        });
-    });
-}
-
-function runTorrentServiceAction(action) {
-    setStatus('torrent-status', 'Running action: ' + action + ' ...');
-    apiJson('/movies/torrent/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: action })
-    })
-    .then(function(payload) {
-        setStatus('torrent-status', payload.message || 'Action completed');
-        return loadTorrents();
-    })
-    .catch(function(err) {
-        setStatus('torrent-status', err.message, true);
-    });
-}
-
-function runTorrentAction(action, id, deleteData) {
-    var message = action + ' torrent #' + id + '...';
-    setStatus('torrent-status', message);
-    apiJson('/movies/torrent/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: action, id: id, delete_data: !!deleteData })
-    })
-    .then(function() {
-        setStatus('torrent-status', 'Torrent action done.');
-        return loadTorrents();
-    })
-    .catch(function(err) {
-        setStatus('torrent-status', err.message, true);
-    });
-}
-
-function loadTorrents() {
-    return apiJson('/movies/torrent/list', { cache: 'no-store' })
-        .then(function(payload) {
-            transmissionInstalled = !!payload.installed;
-            transmissionRunning = !!payload.running;
-
-            var state = document.getElementById('torrent-service-state');
-            if (!transmissionInstalled) {
-                state.textContent = 'Transmission is not installed.';
-            } else if (!transmissionRunning) {
-                state.textContent = 'Transmission installed, service is stopped.';
-            } else {
-                state.textContent = (payload.count || 0) + ' torrent(s) active/completed.';
-            }
-            renderServiceActionButtons();
-            renderTorrents(payload.torrents || []);
-        })
-        .catch(function(err) {
-            setStatus('torrent-status', err.message, true);
-            renderServiceActionButtons();
-        });
 }
 
 function openOmdbModal() {
@@ -1215,66 +917,160 @@ function saveOmdbKey(keyValue) {
         omdbKeySet = !!payload.omdb_key_set;
         updateOmdbBanner();
         setStatus('omdb-settings-status', payload.message || 'Saved.');
-        loadMovies();
+        return loadMovies({ silent: true });
     })
     .catch(function(err) {
         setStatus('omdb-settings-status', err.message, true);
     });
 }
 
-document.getElementById('omdb-search-form').addEventListener('submit', function(event) {
-    event.preventDefault();
-    var query = document.getElementById('omdb-search-input').value.trim();
-    if (!query) return;
-    searchOmdb(query);
+function setUploadProgress(percent, text) {
+    var wrap = document.getElementById('upload-progress-wrap');
+    var fill = document.getElementById('upload-progress-fill');
+    var label = document.getElementById('upload-progress-text');
+    wrap.classList.add('active');
+    fill.style.width = Math.max(0, Math.min(100, percent || 0)) + '%';
+    label.textContent = text || '';
+}
+
+function resetUploadProgress() {
+    document.getElementById('upload-progress-fill').style.width = '0%';
+    document.getElementById('upload-progress-text').textContent = '';
+    document.getElementById('upload-progress-wrap').classList.remove('active');
+}
+
+function uploadSingleFile(file, index, total) {
+    return new Promise(function(resolve, reject) {
+        var formData = new FormData();
+        formData.append('file', file);
+
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', '/movies/upload');
+        xhr.upload.onprogress = function(event) {
+            if (event.lengthComputable) {
+                var pct = (event.loaded / event.total) * 100;
+                setUploadProgress(pct, 'Uploading ' + file.name + ' (' + (index + 1) + '/' + total + ') - ' + pct.toFixed(1) + '%');
+            }
+        };
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== 4) return;
+            var payload = {};
+            try {
+                payload = JSON.parse(xhr.responseText || '{}');
+            } catch (e) {
+                payload = {};
+            }
+
+            if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(payload);
+            } else {
+                reject(new Error(payload.error || ('Upload failed (' + xhr.status + ')')));
+            }
+        };
+        xhr.onerror = function() {
+            reject(new Error('Upload failed due to network error'));
+        };
+        xhr.send(formData);
+    });
+}
+
+function uploadFiles(files) {
+    if (!files || !files.length) return;
+
+    var allowed = ['mkv', 'mp4', 'avi', 'm4v', 'mov', 'wmv', 'flv', 'webm'];
+    var queue = Array.prototype.slice.call(files).filter(function(file) {
+        var ext = file.name.split('.').pop().toLowerCase();
+        return allowed.indexOf(ext) !== -1;
+    });
+
+    if (!queue.length) {
+        setStatus('upload-status', 'No supported video files selected.', true);
+        return;
+    }
+
+    setStatus('upload-status', 'Starting upload of ' + queue.length + ' file(s)...');
+    var uploaded = 0;
+
+    function next() {
+        if (uploaded >= queue.length) {
+            setStatus('upload-status', 'Upload complete. Scanning library...');
+            resetUploadProgress();
+            loadMovies({ silent: true }).finally(function() {
+                setStatus('upload-status', 'Upload complete. Library refreshed.');
+            });
+            return;
+        }
+
+        var file = queue[uploaded];
+        uploadSingleFile(file, uploaded, queue.length)
+            .then(function(payload) {
+                var relativeName = payload.filename || file.name;
+                if (payload.movie) {
+                    replaceMovie(payload.movie);
+                    renderMovies();
+                }
+                return refreshMetadataForFile(relativeName).then(function() {
+                    uploaded += 1;
+                    next();
+                });
+            })
+            .catch(function(err) {
+                setStatus('upload-status', err.message, true);
+                resetUploadProgress();
+            });
+    }
+
+    next();
+}
+
+var dropzone = document.getElementById('upload-dropzone');
+var uploadInput = document.getElementById('upload-file-input');
+var selectBtn = document.getElementById('select-files-btn');
+
+selectBtn.addEventListener('click', function() {
+    uploadInput.click();
 });
 
-document.getElementById('refresh-all-btn').addEventListener('click', function() {
-    loadMovies();
-    loadTorrents();
+uploadInput.addEventListener('change', function() {
+    uploadFiles(uploadInput.files);
+    uploadInput.value = '';
+});
+
+['dragenter', 'dragover'].forEach(function(eventName) {
+    dropzone.addEventListener(eventName, function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        dropzone.classList.add('dragover');
+    });
+});
+
+['dragleave', 'drop'].forEach(function(eventName) {
+    dropzone.addEventListener(eventName, function(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        dropzone.classList.remove('dragover');
+    });
+});
+
+dropzone.addEventListener('drop', function(event) {
+    var files = event.dataTransfer ? event.dataTransfer.files : null;
+    uploadFiles(files);
+});
+
+document.getElementById('scan-library-btn').addEventListener('click', function() {
+    loadMovies({ skipHydrate: false });
 });
 
 document.getElementById('refresh-movies-btn').addEventListener('click', function() {
-    loadMovies();
+    loadMovies({ skipHydrate: true });
 });
 
-document.getElementById('movie-filter-input').addEventListener('input', function() {
-    renderMovies();
+document.getElementById('refresh-metadata-btn').addEventListener('click', function() {
+    hydrateMissingMetadata();
 });
 
-document.getElementById('movie-sort-select').addEventListener('change', function() {
-    renderMovies();
-});
-
-document.getElementById('torrent-add-form').addEventListener('submit', function(event) {
-    event.preventDefault();
-    var magnet = document.getElementById('magnet-input').value.trim();
-    var torrentFile = document.getElementById('torrent-file-input').files[0];
-    if (!magnet && !torrentFile) {
-        setStatus('torrent-status', 'Paste a magnet link or select a .torrent file.', true);
-        return;
-    }
-    var formData = new FormData();
-    if (magnet) formData.append('magnet', magnet);
-    if (torrentFile) formData.append('torrent_file', torrentFile);
-    setStatus('torrent-status', 'Adding torrent...');
-    fetch('/movies/torrent/add', { method: 'POST', body: formData })
-        .then(function(response) {
-            return response.json().catch(function() { return {}; }).then(function(payload) {
-                if (!response.ok) throw new Error(payload.error || ('Request failed (' + response.status + ')'));
-                return payload;
-            });
-        })
-        .then(function(payload) {
-            setStatus('torrent-status', payload.message || 'Torrent added.');
-            document.getElementById('magnet-input').value = '';
-            document.getElementById('torrent-file-input').value = '';
-            loadTorrents();
-        })
-        .catch(function(err) {
-            setStatus('torrent-status', err.message, true);
-        });
-});
+document.getElementById('movie-filter-input').addEventListener('input', renderMovies);
+document.getElementById('movie-sort-select').addEventListener('change', renderMovies);
 
 document.getElementById('movie-modal-close').addEventListener('click', closeMovieModal);
 document.getElementById('movie-modal').addEventListener('click', function(event) {
@@ -1293,18 +1089,12 @@ document.getElementById('omdb-modal').addEventListener('click', function(event) 
 
 document.getElementById('omdb-form').addEventListener('submit', function(event) {
     event.preventDefault();
-    var key = document.getElementById('omdb-key-input').value.trim();
-    saveOmdbKey(key);
+    saveOmdbKey(document.getElementById('omdb-key-input').value.trim());
 });
 
 document.getElementById('omdb-clear-btn').addEventListener('click', function() {
     if (!confirm('Remove saved OMDb API key?')) return;
     saveOmdbKey('');
-});
-
-document.getElementById('downloads-toggle').addEventListener('click', function() {
-    var content = document.getElementById('downloads-content');
-    content.classList.toggle('collapsed');
 });
 
 document.addEventListener('keydown', function(event) {
@@ -1315,13 +1105,6 @@ document.addEventListener('keydown', function(event) {
 });
 
 updateOmdbBanner();
-loadMovies();
-loadTorrents();
-torrentRefreshTimer = window.setInterval(loadTorrents, 3000);
-window.addEventListener('beforeunload', function() {
-    if (torrentRefreshTimer) {
-        window.clearInterval(torrentRefreshTimer);
-    }
-});
+loadMovies({ skipHydrate: false });
 </script>
 {% endblock %}

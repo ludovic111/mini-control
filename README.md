@@ -20,7 +20,7 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 - **Monitoring Charts** - Last-hour CPU, RAM, disk I/O, and network bandwidth history (in-memory, lightweight)
 - **Service Manager** - List, start, stop, restart systemd services, view logs
 - **File Manager** - Browse, upload, download, delete, and create files/folders
-- **Movies** - Local movie browser with OMDb metadata lookup/cache, streaming, and integrated Transmission download controls
+- **Movies** - Local movie browser with drag/drop uploads, OMDb metadata lookup/cache, streaming, and delete controls
 - **System Terminal** - Execute commands with shortcut buttons, persistent history, copy/clear output
 - **Network Info** - IP, MAC, gateway, DNS, ping tests, active connections
 - **Internet Speedtest** - Run download/upload/latency tests from the server and inspect raw output
