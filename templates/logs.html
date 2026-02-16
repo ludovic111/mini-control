@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Logs - Mini Control{% endblock %}
+{% block page_title %}Logs Viewer{% endblock %}
+{% block page_subtitle %}Tail journalctl, kernel, and syslog output with filters{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">Log Controls</div>
+    <div class="card-body">
+        <div class="log-controls">
+            <div class="form-group-inline">
+                <label>Source:</label>
+                <select id="log-source">
+                    <option value="journalctl">journalctl</option>
+                    <option value="dmesg">dmesg</option>
+                    <option value="syslog">/var/log/syslog</option>
+                </select>
+            </div>
+            <div class="form-group-inline">
+                <label>Lines:</label>
+                <select id="log-lines">
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                </select>
+            </div>
+            <div class="form-group-inline">
+                <label>Filter:</label>
+                <input type="text" id="log-filter" placeholder="grep pattern...">
+            </div>
+            <button class="btn btn-primary" onclick="loadLogs()">Load</button>
+            <label class="auto-refresh-label">
+                <input type="checkbox" id="auto-refresh"> Auto-refresh (10s)
+            </label>
+        </div>
+    </div>
+</div>
+
+<div class="card section-gap">
+    <div class="card-header">
+        Log Output
+        <span id="log-timestamp" class="text-muted"></span>
+    </div>
+    <div class="card-body">
+        <pre class="log-output log-viewer" id="log-output">Select a source and click Load.</pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var refreshTimer = null;
+
+function loadLogs() {
+    var source = document.getElementById('log-source').value;
+    var lines = document.getElementById('log-lines').value;
+    var filter = document.getElementById('log-filter').value;
+    var out = document.getElementById('log-output');
+    out.textContent = 'Loading...';
+
+    var url = '/api/logs?source=' + encodeURIComponent(source) +
+              '&lines=' + encodeURIComponent(lines) +
+              '&filter=' + encodeURIComponent(filter);
+
+    fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            out.textContent = d.logs || d.error || 'No logs found';
+            document.getElementById('log-timestamp').textContent = 'Updated: ' + new Date().toLocaleTimeString();
+            out.scrollTop = out.scrollHeight;
+        })
+        .catch(function() {
+            out.textContent = 'Failed to load logs';
+        });
+}
+
+document.getElementById('auto-refresh').addEventListener('change', function() {
+    if (this.checked) {
+        loadLogs();
+        refreshTimer = setInterval(loadLogs, 10000);
+    } else {
+        if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    }
+});
+</script>
+{% endblock %}

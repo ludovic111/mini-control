@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+{% block title %}Packages - Mini Control{% endblock %}
+{% block page_title %}Package Manager{% endblock %}
+{% block page_subtitle %}Search, install, and remove APT packages safely{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">Search &amp; Install Packages</div>
+    <div class="card-body">
+        <form id="search-form" class="terminal-input-row">
+            <input type="text" id="pkg-search" placeholder="Search apt packages..." autocomplete="off">
+            <button type="submit" class="btn btn-primary">Search</button>
+        </form>
+        <div id="search-results" style="margin-top: 1rem;"></div>
+    </div>
+</div>
+
+<div class="card section-gap-lg">
+    <div class="card-header">
+        Installed Packages
+        <button class="btn btn-sm btn-primary" onclick="loadInstalled()">Refresh</button>
+    </div>
+    <div class="card-body">
+        <input type="text" id="installed-filter" placeholder="Filter installed..." class="input-inline" style="margin-bottom: 1rem;">
+        <div class="table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Package</th>
+                        <th>Version</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="installed-tbody">
+                    <tr><td colspan="3" class="text-center">Click Refresh to load</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div id="pkg-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="pkg-modal-title">Package Operation</h3>
+            <button class="btn btn-sm btn-danger" onclick="closePkgModal()">&times;</button>
+        </div>
+        <pre class="log-output" id="pkg-modal-output"></pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('search-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var q = document.getElementById('pkg-search').value.trim();
+    if (!q) return;
+    var container = document.getElementById('search-results');
+    container.innerHTML = '<p>Searching...</p>';
+    fetch('/api/packages/search?q=' + encodeURIComponent(q))
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.results.length) { container.innerHTML = '<p>No packages found.</p>'; return; }
+            var html = '<table class="data-table"><thead><tr><th>Package</th><th>Description</th><th>Action</th></tr></thead><tbody>';
+            d.results.forEach(function(p) {
+                html += '<tr><td>' + escHtml(p.name) + '</td><td>' + escHtml(p.description) + '</td>';
+                html += '<td><button class="btn btn-sm btn-success" onclick="installPkg(\'' + escAttr(p.name) + '\')">Install</button></td></tr>';
+            });
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        })
+        .catch(function() { container.innerHTML = '<p>Search failed.</p>'; });
+});
+
+function installPkg(name) {
+    if (!confirm('Install ' + name + '?')) return;
+    showPkgModal('Installing ' + name + '...');
+    fetch('/api/packages/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ package: name })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        document.getElementById('pkg-modal-output').textContent = d.output || d.error;
+    })
+    .catch(function() {
+        document.getElementById('pkg-modal-output').textContent = 'Request failed';
+    });
+}
+
+function removePkg(name) {
+    if (!confirm('Remove ' + name + '?')) return;
+    showPkgModal('Removing ' + name + '...');
+    fetch('/api/packages/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ package: name })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        document.getElementById('pkg-modal-output').textContent = d.output || d.error;
+    })
+    .catch(function() {
+        document.getElementById('pkg-modal-output').textContent = 'Request failed';
+    });
+}
+
+var allInstalled = [];
+
+function loadInstalled() {
+    var tbody = document.getElementById('installed-tbody');
+    tbody.innerHTML = '<tr><td colspan="3" class="text-center">Loading...</td></tr>';
+    fetch('/api/packages/installed')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            allInstalled = d.packages;
+            renderInstalled(allInstalled);
+        })
+        .catch(function() {
+            tbody.innerHTML = '<tr><td colspan="3" class="text-center">Failed to load</td></tr>';
+        });
+}
+
+function renderInstalled(list) {
+    var tbody = document.getElementById('installed-tbody');
+    if (!list.length) { tbody.innerHTML = '<tr><td colspan="3" class="text-center">No packages</td></tr>'; return; }
+    var html = '';
+    list.forEach(function(p) {
+        html += '<tr><td>' + escHtml(p.name) + '</td><td>' + escHtml(p.version) + '</td>';
+        html += '<td><button class="btn btn-sm btn-danger" onclick="removePkg(\'' + escAttr(p.name) + '\')">Remove</button></td></tr>';
+    });
+    tbody.innerHTML = html;
+}
+
+document.getElementById('installed-filter').addEventListener('input', function() {
+    var f = this.value.toLowerCase();
+    var filtered = allInstalled.filter(function(p) { return p.name.toLowerCase().indexOf(f) !== -1; });
+    renderInstalled(filtered);
+});
+
+function showPkgModal(text) {
+    document.getElementById('pkg-modal-title').textContent = 'Package Operation';
+    document.getElementById('pkg-modal-output').textContent = text;
+    document.getElementById('pkg-modal').style.display = 'flex';
+}
+
+function closePkgModal() {
+    document.getElementById('pkg-modal').style.display = 'none';
+}
+
+document.getElementById('pkg-modal').addEventListener('click', function(e) {
+    if (e.target === this) closePkgModal();
+});
+
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return s.replace(/'/g, "\\'").replace(/"/g, '\\"'); }
+</script>
+{% endblock %}

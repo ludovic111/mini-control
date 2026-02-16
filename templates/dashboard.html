@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - Mini Control{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block page_subtitle %}Live CPU, memory, disk, and critical service health{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="card stat-card">
+        <div class="card-header">CPU Usage</div>
+        <div class="card-body">
+            <div class="stat-value" id="cpu-percent">{{ cpu_percent }}%</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="cpu-bar" style="width: {{ cpu_percent }}%"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="card-header">Memory</div>
+        <div class="card-body">
+            <div class="stat-value" id="mem-percent">{{ mem_percent }}%</div>
+            <div class="stat-detail" id="mem-detail">{{ mem_used }} / {{ mem_total }}</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="mem-bar" style="width: {{ mem_percent }}%"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="card-header">Disk</div>
+        <div class="card-body">
+            <div class="stat-value" id="disk-percent">{{ disk_percent }}%</div>
+            <div class="stat-detail" id="disk-detail">{{ disk_used }} / {{ disk_total }}</div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="disk-bar" style="width: {{ disk_percent }}%"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="card-header">CPU Temperature</div>
+        <div class="card-body">
+            <div class="stat-value" id="cpu-temp">{{ cpu_temp }}&deg;C</div>
+        </div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="card-header">Uptime</div>
+        <div class="card-body">
+            <div class="stat-value" id="uptime">{{ uptime }}</div>
+        </div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="card-header">Load Average</div>
+        <div class="card-body">
+            <div class="stat-value stat-value-sm" id="load-avg">{{ load_avg }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="card section-gap-lg">
+    <div class="card-header">Services</div>
+    <div class="card-body">
+        <div class="service-status-row">
+            <span class="status-dot {% if ssh_active %}status-active{% else %}status-inactive{% endif %}" id="ssh-dot"></span>
+            <span>SSH Server</span>
+        </div>
+        <div class="service-status-row">
+            <span class="status-dot {% if panel_active %}status-active{% else %}status-inactive{% endif %}" id="panel-dot"></span>
+            <span>Control Panel</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function refreshDashboard() {
+    fetch('/api/dashboard')
+        .then(r => r.json())
+        .then(d => {
+            document.getElementById('cpu-percent').textContent = d.cpu_percent + '%';
+            document.getElementById('cpu-bar').style.width = d.cpu_percent + '%';
+            document.getElementById('mem-percent').textContent = d.mem_percent + '%';
+            document.getElementById('mem-detail').textContent = d.mem_used + ' / ' + d.mem_total;
+            document.getElementById('mem-bar').style.width = d.mem_percent + '%';
+            document.getElementById('disk-percent').textContent = d.disk_percent + '%';
+            document.getElementById('disk-detail').textContent = d.disk_used + ' / ' + d.disk_total;
+            document.getElementById('disk-bar').style.width = d.disk_percent + '%';
+            document.getElementById('cpu-temp').innerHTML = d.cpu_temp + '&deg;C';
+            document.getElementById('uptime').textContent = d.uptime;
+            document.getElementById('load-avg').textContent = d.load_avg;
+            document.getElementById('ssh-dot').className = 'status-dot ' + (d.ssh_active ? 'status-active' : 'status-inactive');
+            document.getElementById('panel-dot').className = 'status-dot ' + (d.panel_active ? 'status-active' : 'status-inactive');
+
+            // Color bars based on usage
+            ['cpu', 'mem', 'disk'].forEach(function(key) {
+                var val = d[key + '_percent'];
+                var bar = document.getElementById(key + '-bar');
+                bar.className = 'progress-fill' + (val > 90 ? ' bar-danger' : val > 70 ? ' bar-warn' : '');
+            });
+        })
+        .catch(function() {});
+}
+setInterval(refreshDashboard, 5000);
+</script>
+{% endblock %}

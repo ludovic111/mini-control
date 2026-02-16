@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Network - Mini Control{% endblock %}
+{% block page_title %}Network Info{% endblock %}
+{% block page_subtitle %}Inspect interfaces, DNS, connectivity, and active sessions{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="card">
+        <div class="card-header">IP Address</div>
+        <div class="card-body"><pre class="info-pre">{{ ip_info or 'N/A' }}</pre></div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">MAC Address</div>
+        <div class="card-body"><pre class="info-pre">{{ mac_info or 'N/A' }}</pre></div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">Gateway</div>
+        <div class="card-body"><pre class="info-pre">{{ gateway or 'N/A' }}</pre></div>
+    </div>
+
+    <div class="card">
+        <div class="card-header">DNS Servers</div>
+        <div class="card-body"><pre class="info-pre">{{ dns or 'N/A' }}</pre></div>
+    </div>
+</div>
+
+<div class="card section-gap-lg">
+    <div class="card-header">Ping Tests</div>
+    <div class="card-body">
+        <div class="ping-row">
+            <button class="btn btn-primary" onclick="doPing('gateway')">Ping Gateway</button>
+            <button class="btn btn-primary" onclick="doPing('8.8.8.8')">Ping 8.8.8.8</button>
+        </div>
+        <pre class="terminal-output" id="ping-output">Click a button to run a ping test.</pre>
+    </div>
+</div>
+
+<div class="card section-gap-lg">
+    <div class="card-header">
+        Active Connections
+        <button class="btn btn-sm btn-primary" onclick="loadConnections()">Refresh</button>
+    </div>
+    <div class="card-body">
+        <pre class="terminal-output" id="connections-output">Click Refresh to load connections.</pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function doPing(target) {
+    var out = document.getElementById('ping-output');
+    out.textContent = 'Pinging ' + target + '...';
+    fetch('/api/ping/' + encodeURIComponent(target))
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            out.textContent = d.output;
+            out.className = 'terminal-output ' + (d.success ? 'ping-ok' : 'ping-fail');
+        })
+        .catch(function() { out.textContent = 'Request failed'; });
+}
+
+function loadConnections() {
+    var out = document.getElementById('connections-output');
+    out.textContent = 'Loading...';
+    fetch('/api/connections')
+        .then(function(r) { return r.json(); })
+        .then(function(d) { out.textContent = d.output; })
+        .catch(function() { out.textContent = 'Request failed'; });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}Files - Mini Control{% endblock %}
+{% block page_title %}File Manager{% endblock %}
+{% block page_subtitle %}Browse, upload, download, and clean files in /home/ludovic{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        <span>/home/ludovic/{% if current_path %}{{ current_path }}{% endif %}</span>
+        <div class="header-actions">
+            {% if parent is not none %}
+            <a href="{{ url_for('files', subpath=parent) }}" class="btn btn-sm btn-primary">&larr; Parent</a>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card-body">
+        <form id="upload-form" class="upload-area" enctype="multipart/form-data">
+            <input type="file" id="upload-input" name="file">
+            <button type="submit" class="btn btn-sm btn-success">Upload</button>
+        </form>
+
+        <div class="table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Size</th>
+                        <th>Modified</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in items %}
+                    <tr>
+                        <td>
+                            {% if item.is_dir %}
+                            <a href="{{ url_for('files', subpath=item.path) }}" class="file-link dir-link">{{ item.name }}/</a>
+                            {% else %}
+                            <span class="file-link">{{ item.name }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ item.size }}</td>
+                        <td>{{ item.modified }}</td>
+                        <td class="action-btns">
+                            {% if not item.is_dir %}
+                            <a href="{{ url_for('download_file', subpath=item.path) }}" class="btn btn-sm btn-primary">Download</a>
+                            {% endif %}
+                            <button class="btn btn-sm btn-danger" onclick="deleteFile('{{ item.path }}', '{{ item.name }}')">Delete</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% if not items %}
+                    <tr><td colspan="4" class="text-center">Empty directory</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('upload-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var fileInput = document.getElementById('upload-input');
+    if (!fileInput.files.length) { alert('Select a file first'); return; }
+    var formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    var path = '{{ current_path }}';
+    var url = path ? '/files/upload/' + path : '/files/upload';
+    fetch(url, { method: 'POST', body: formData })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) { alert('Error: ' + d.error); }
+            else { location.reload(); }
+        })
+        .catch(function() { alert('Upload failed'); });
+});
+
+function deleteFile(path, name) {
+    if (!confirm('Delete "' + name + '"? This cannot be undone.')) return;
+    fetch('/files/delete/' + path, { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) { alert('Error: ' + d.error); }
+            else { location.reload(); }
+        })
+        .catch(function() { alert('Delete failed'); });
+}
+</script>
+{% endblock %}

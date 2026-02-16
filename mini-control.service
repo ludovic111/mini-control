@@ -1,0 +1,13 @@
+[Unit]
+Description=Mac Mini Control Panel
+After=network.target
+
+[Service]
+User=ludovic
+WorkingDirectory=/home/ludovic/mini-control
+ExecStart=/usr/bin/python3 /home/ludovic/mini-control/app.py
+Restart=on-failure
+Environment=PATH=/home/ludovic/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

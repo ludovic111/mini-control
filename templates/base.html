@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Mini Control panel for the Mac Mini Debian server">
+    <title>{% block title %}Mini Control{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="{% block body_class %}app-shell{% endblock %}">
+    <nav class="sidebar" id="app-sidebar">
+        <div class="sidebar-header">
+            <h2>Mini Control</h2>
+            <span class="subtitle">Mac Mini Server</span>
+            <p class="sidebar-meta">Debian 12 i386 | 192.168.1.50</p>
+        </div>
+        <ul class="nav-links">
+            <li><a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">
+                <span class="nav-icon">&#9632;</span> Dashboard
+            </a></li>
+            <li><a href="{{ url_for('services') }}" class="{% if request.endpoint == 'services' %}active{% endif %}">
+                <span class="nav-icon">&#9881;</span> Services
+            </a></li>
+            <li><a href="{{ url_for('files') }}" class="{% if request.endpoint == 'files' %}active{% endif %}">
+                <span class="nav-icon">&#128193;</span> Files
+            </a></li>
+            <li><a href="{{ url_for('terminal') }}" class="{% if request.endpoint == 'terminal' %}active{% endif %}">
+                <span class="nav-icon">&#62;&gt;_</span> Terminal
+            </a></li>
+            <li><a href="{{ url_for('assistant') }}" class="{% if request.endpoint == 'assistant' %}active{% endif %}">
+                <span class="nav-icon">&#129302;</span> AI Assistant
+            </a></li>
+            <li><a href="{{ url_for('network') }}" class="{% if request.endpoint == 'network' %}active{% endif %}">
+                <span class="nav-icon">&#127760;</span> Network
+            </a></li>
+            <li><a href="{{ url_for('packages') }}" class="{% if request.endpoint == 'packages' %}active{% endif %}">
+                <span class="nav-icon">&#128230;</span> Packages
+            </a></li>
+            <li><a href="{{ url_for('logs') }}" class="{% if request.endpoint == 'logs' %}active{% endif %}">
+                <span class="nav-icon">&#128220;</span> Logs
+            </a></li>
+        </ul>
+        <div class="sidebar-footer">
+            <a href="{{ url_for('logout') }}" class="logout-btn">Logout</a>
+        </div>
+    </nav>
+    <button type="button" class="sidebar-backdrop" aria-label="Close navigation"></button>
+
+    <div class="main-content">
+        <header class="topbar">
+            <div class="topbar-title-wrap">
+                <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Toggle navigation">&#9776;</button>
+                <div>
+                    <h1>{% block page_title %}Dashboard{% endblock %}</h1>
+                    <p class="page-subtitle">{% block page_subtitle %}Manage your Mac Mini services and system health{% endblock %}</p>
+                </div>
+            </div>
+            <div class="topbar-actions">
+                <span class="machine-chip">ludovic@192.168.1.50</span>
+                <a href="{{ url_for('logout') }}" class="btn btn-sm btn-muted topbar-logout">Logout</a>
+            </div>
+        </header>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-messages">
+            {% for category, message in messages %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        <div class="content">
+            {% block content %}{% endblock %}
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        var sidebar = document.getElementById('app-sidebar');
+        var toggle = document.getElementById('menu-toggle');
+        var backdrop = document.querySelector('.sidebar-backdrop');
+
+        function closeSidebar() {
+            sidebar.classList.remove('open');
+        }
+
+        function toggleSidebar() {
+            sidebar.classList.toggle('open');
+        }
+
+        if (toggle) {
+            toggle.addEventListener('click', toggleSidebar);
+        }
+        if (backdrop) {
+            backdrop.addEventListener('click', closeSidebar);
+        }
+        document.querySelectorAll('.nav-links a').forEach(function(link) {
+            link.addEventListener('click', closeSidebar);
+        });
+        document.addEventListener('keydown', function(evt) {
+            if (evt.key === 'Escape') {
+                closeSidebar();
+            }
+        });
+        window.addEventListener('resize', function() {
+            if (window.innerWidth > 900) {
+                closeSidebar();
+            }
+        });
+    })();
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Services - Mini Control{% endblock %}
+{% block page_title %}Service Manager{% endblock %}
+{% block page_subtitle %}Search, control, and inspect systemd services{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        Systemd Services
+        <input type="text" id="service-filter" placeholder="Filter services..." class="input-inline">
+    </div>
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table class="data-table" id="services-table">
+                <thead>
+                    <tr>
+                        <th>Service</th>
+                        <th>Load</th>
+                        <th>Active</th>
+                        <th>State</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for svc in services %}
+                    <tr class="service-row">
+                        <td class="svc-name">{{ svc.name }}</td>
+                        <td>{{ svc.load }}</td>
+                        <td>
+                            <span class="badge {% if svc.active == 'active' %}badge-success{% elif svc.active == 'failed' %}badge-danger{% else %}badge-muted{% endif %}">
+                                {{ svc.active }}
+                            </span>
+                        </td>
+                        <td>{{ svc.sub }}</td>
+                        <td class="action-btns">
+                            <button class="btn btn-sm btn-success" onclick="svcAction('start', '{{ svc.name }}')">Start</button>
+                            <button class="btn btn-sm btn-danger" onclick="svcAction('stop', '{{ svc.name }}')">Stop</button>
+                            <button class="btn btn-sm btn-primary" onclick="svcAction('restart', '{{ svc.name }}')">Restart</button>
+                            <button class="btn btn-sm btn-muted" onclick="viewLogs('{{ svc.name }}')">Logs</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div id="log-modal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3 id="log-modal-title">Service Logs</h3>
+            <button class="btn btn-sm btn-danger" onclick="closeModal()">&times;</button>
+        </div>
+        <pre class="log-output" id="log-output"></pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('service-filter').addEventListener('input', function() {
+    var filter = this.value.toLowerCase();
+    var rows = document.querySelectorAll('.service-row');
+    rows.forEach(function(row) {
+        var name = row.querySelector('.svc-name').textContent.toLowerCase();
+        row.style.display = name.indexOf(filter) !== -1 ? '' : 'none';
+    });
+});
+
+function svcAction(action, name) {
+    if (!confirm(action.charAt(0).toUpperCase() + action.slice(1) + ' ' + name + '?')) return;
+    fetch('/api/service/' + action + '/' + encodeURIComponent(name), { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (d.error) { alert('Error: ' + d.error); }
+            else { alert(d.message); location.reload(); }
+        })
+        .catch(function() { alert('Request failed'); });
+}
+
+function viewLogs(name) {
+    document.getElementById('log-modal-title').textContent = 'Logs: ' + name;
+    document.getElementById('log-output').textContent = 'Loading...';
+    document.getElementById('log-modal').style.display = 'flex';
+    fetch('/api/service/logs/' + encodeURIComponent(name))
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            document.getElementById('log-output').textContent = d.logs;
+        })
+        .catch(function() {
+            document.getElementById('log-output').textContent = 'Failed to load logs';
+        });
+}
+
+function closeModal() {
+    document.getElementById('log-modal').style.display = 'none';
+}
+
+document.getElementById('log-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+});
+</script>
+{% endblock %}

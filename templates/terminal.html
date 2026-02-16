@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Terminal - Mini Control{% endblock %}
+{% block page_title %}System Terminal{% endblock %}
+{% block page_subtitle %}Run diagnostics and shell commands on the host{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">Command Shortcuts</div>
+    <div class="card-body shortcut-bar">
+        <button class="btn btn-sm btn-muted" onclick="runShortcut('df -h')">df -h</button>
+        <button class="btn btn-sm btn-muted" onclick="runShortcut('free -m')">free -m</button>
+        <button class="btn btn-sm btn-muted" onclick="runShortcut('top -bn1 | head -20')">top (snapshot)</button>
+        <button class="btn btn-sm btn-muted" onclick="runShortcut('ip a')">ip a</button>
+        <button class="btn btn-sm btn-muted" onclick="runShortcut('uptime')">uptime</button>
+        <button class="btn btn-sm btn-muted" onclick="runShortcut('lsblk')">lsblk</button>
+    </div>
+</div>
+
+<div class="card section-gap">
+    <div class="card-body">
+        <form id="cmd-form" class="terminal-input-row">
+            <span class="terminal-prompt">$</span>
+            <input type="text" id="cmd-input" placeholder="Type a command..." autofocus autocomplete="off">
+            <button type="submit" class="btn btn-primary">Run</button>
+        </form>
+    </div>
+</div>
+
+<div class="card section-gap">
+    <div class="card-header">Output</div>
+    <div class="card-body">
+        <pre class="terminal-output" id="terminal-output">Ready. Type a command above.</pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var history = [];
+var histIdx = -1;
+
+document.getElementById('cmd-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var input = document.getElementById('cmd-input');
+    var cmd = input.value.trim();
+    if (!cmd) return;
+    executeCmd(cmd);
+    history.unshift(cmd);
+    histIdx = -1;
+    input.value = '';
+});
+
+document.getElementById('cmd-input').addEventListener('keydown', function(e) {
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (histIdx < history.length - 1) { histIdx++; this.value = history[histIdx]; }
+    } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (histIdx > 0) { histIdx--; this.value = history[histIdx]; }
+        else { histIdx = -1; this.value = ''; }
+    }
+});
+
+function runShortcut(cmd) {
+    document.getElementById('cmd-input').value = cmd;
+    executeCmd(cmd);
+}
+
+function executeCmd(cmd) {
+    var output = document.getElementById('terminal-output');
+    output.textContent = '$ ' + cmd + '\nExecuting...\n';
+    fetch('/api/terminal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: cmd })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        output.textContent = '$ ' + cmd + '\n' + (d.output || d.error || '(no output)');
+        if (d.returncode !== undefined && d.returncode !== 0) {
+            output.textContent += '\n[exit code: ' + d.returncode + ']';
+        }
+    })
+    .catch(function() {
+        output.textContent = '$ ' + cmd + '\nError: Request failed';
+    });
+}
+</script>
+{% endblock %}
