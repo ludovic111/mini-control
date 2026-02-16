@@ -19,7 +19,7 @@ import psutil
 import requests as http_requests
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    session, jsonify, send_file, flash, abort
+    session, jsonify, send_file, flash, abort, Response
 )
 
 import config
@@ -70,6 +70,44 @@ def format_bytes(n):
             return f"{n:.1f} {unit}"
         n /= 1024
     return f"{n:.1f} PB"
+
+
+def validate_new_entry_name(name):
+    """Validate a new file/folder name for the file manager."""
+    if not name:
+        return 'Name is required'
+    if name in ('.', '..'):
+        return 'Invalid name'
+    if '/' in name or '\\' in name:
+        return 'Name cannot contain path separators'
+    if '\x00' in name:
+        return 'Invalid name'
+    return None
+
+
+def parse_log_lines(raw_lines):
+    """Parse and clamp logs line count."""
+    try:
+        return min(max(int(raw_lines), 1), 500)
+    except ValueError:
+        return 100
+
+
+def build_logs_cmd(source, lines, grep_filter=''):
+    """Build log retrieval shell command."""
+    if source == 'journalctl':
+        cmd = f'journalctl -n {lines} --no-pager'
+    elif source == 'dmesg':
+        cmd = f'dmesg | tail -n {lines}'
+    elif source == 'syslog':
+        cmd = f'tail -n {lines} /var/log/syslog 2>/dev/null || echo "syslog not available"'
+    else:
+        return None, 'Invalid source'
+
+    if grep_filter:
+        safe_filter = shlex.quote(grep_filter)
+        cmd += f' | grep -i {safe_filter}'
+    return cmd, None
 
 
 def get_cpu_temp():
@@ -322,6 +360,70 @@ def upload_file(subpath=''):
 @login_required
 def upload_file_root():
     return upload_file('')
+
+
+@app.route('/files/create-folder/<path:subpath>', methods=['POST'])
+@login_required
+def create_folder(subpath=''):
+    target_dir = safe_path(subpath)
+    if target_dir is None:
+        return jsonify({'error': 'Access denied'}), 403
+    if not target_dir.is_dir():
+        return jsonify({'error': 'Not a directory'}), 400
+
+    name = request.json.get('name', '').strip()
+    err = validate_new_entry_name(name)
+    if err:
+        return jsonify({'error': err}), 400
+
+    new_dir = target_dir / name
+    if new_dir.exists():
+        return jsonify({'error': 'Already exists'}), 409
+
+    try:
+        new_dir.mkdir()
+        return jsonify({'status': 'ok', 'name': name})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/files/create-folder', methods=['POST'])
+@login_required
+def create_folder_root():
+    return create_folder('')
+
+
+@app.route('/files/create-file/<path:subpath>', methods=['POST'])
+@login_required
+def create_file(subpath=''):
+    target_dir = safe_path(subpath)
+    if target_dir is None:
+        return jsonify({'error': 'Access denied'}), 403
+    if not target_dir.is_dir():
+        return jsonify({'error': 'Not a directory'}), 400
+
+    name = request.json.get('name', '').strip()
+    content = request.json.get('content', '')
+    err = validate_new_entry_name(name)
+    if err:
+        return jsonify({'error': err}), 400
+
+    new_file = target_dir / name
+    if new_file.exists():
+        return jsonify({'error': 'Already exists'}), 409
+
+    try:
+        with open(new_file, 'x') as f:
+            f.write(content)
+        return jsonify({'status': 'ok', 'name': name})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/files/create-file', methods=['POST'])
+@login_required
+def create_file_root():
+    return create_file('')
 
 
 # --- System Terminal ---
@@ -938,29 +1040,37 @@ def logs():
 @login_required
 def api_logs():
     source = request.args.get('source', 'journalctl')
-    lines = request.args.get('lines', '100')
+    lines = parse_log_lines(request.args.get('lines', '100'))
     grep_filter = request.args.get('filter', '').strip()
 
-    try:
-        lines = min(int(lines), 500)
-    except ValueError:
-        lines = 100
-
-    if source == 'journalctl':
-        cmd = f'journalctl -n {lines} --no-pager'
-    elif source == 'dmesg':
-        cmd = f'dmesg | tail -n {lines}'
-    elif source == 'syslog':
-        cmd = f'tail -n {lines} /var/log/syslog 2>/dev/null || echo "syslog not available"'
-    else:
-        return jsonify({'error': 'Invalid source'}), 400
-
-    if grep_filter:
-        safe_filter = shlex.quote(grep_filter)
-        cmd += f' | grep -i {safe_filter}'
+    cmd, err = build_logs_cmd(source, lines, grep_filter)
+    if err:
+        return jsonify({'error': err}), 400
 
     stdout, stderr, _ = run_cmd(cmd, timeout=15)
     return jsonify({'logs': stdout or stderr or 'No logs found'})
+
+
+@app.route('/api/logs/download')
+@login_required
+def api_logs_download():
+    source = request.args.get('source', 'journalctl')
+    lines = parse_log_lines(request.args.get('lines', '100'))
+    grep_filter = request.args.get('filter', '').strip()
+
+    cmd, err = build_logs_cmd(source, lines, grep_filter)
+    if err:
+        return jsonify({'error': err}), 400
+
+    stdout, stderr, _ = run_cmd(cmd, timeout=15)
+    logs = stdout or stderr or 'No logs found'
+    timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    filename = f'{source}-{timestamp}.log'
+    return Response(
+        logs + '\n',
+        mimetype='text/plain; charset=utf-8',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+    )
 
 
 # --- Main ---

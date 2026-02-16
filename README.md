@@ -17,11 +17,11 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 
 - **Dashboard** - CPU, RAM, disk usage, uptime, temperature, load average, service status
 - **Service Manager** - List, start, stop, restart systemd services, view logs
-- **File Manager** - Browse, upload, download, delete files
-- **System Terminal** - Execute commands with shortcut buttons
+- **File Manager** - Browse, upload, download, delete, and create files/folders
+- **System Terminal** - Execute commands with shortcut buttons, persistent history, copy/clear output
 - **Network Info** - IP, MAC, gateway, DNS, ping tests, active connections
 - **Package Manager** - Search, install, remove apt packages
-- **Logs Viewer** - journalctl, dmesg, syslog with filtering and auto-refresh
+- **Logs Viewer** - journalctl, dmesg, syslog with filtering, auto-refresh, and log downloads
 
 ## Requirements
 

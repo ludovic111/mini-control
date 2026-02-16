@@ -18,6 +18,16 @@
             <input type="file" id="upload-input" name="file">
             <button type="submit" class="btn btn-sm btn-success">Upload</button>
         </form>
+        <div class="create-row">
+            <form id="create-folder-form" class="create-inline-form">
+                <input type="text" id="new-folder-name" placeholder="New folder name" autocomplete="off">
+                <button type="submit" class="btn btn-sm btn-primary">Create Folder</button>
+            </form>
+            <form id="create-file-form" class="create-inline-form">
+                <input type="text" id="new-file-name" placeholder="New file name" autocomplete="off">
+                <button type="submit" class="btn btn-sm btn-muted">Create File</button>
+            </form>
+        </div>
 
         <div class="table-wrapper">
             <table class="data-table">
@@ -61,14 +71,21 @@
 
 {% block scripts %}
 <script>
+var currentPath = {{ current_path|tojson }};
+
+function encodeSubpath(path) {
+    return path.split('/').map(function(part) {
+        return encodeURIComponent(part);
+    }).join('/');
+}
+
 document.getElementById('upload-form').addEventListener('submit', function(e) {
     e.preventDefault();
     var fileInput = document.getElementById('upload-input');
     if (!fileInput.files.length) { alert('Select a file first'); return; }
     var formData = new FormData();
     formData.append('file', fileInput.files[0]);
-    var path = '{{ current_path }}';
-    var url = path ? '/files/upload/' + path : '/files/upload';
+    var url = currentPath ? '/files/upload/' + encodeSubpath(currentPath) : '/files/upload';
     fetch(url, { method: 'POST', body: formData })
         .then(function(r) { return r.json(); })
         .then(function(d) {
@@ -78,9 +95,47 @@ document.getElementById('upload-form').addEventListener('submit', function(e) {
         .catch(function() { alert('Upload failed'); });
 });
 
+document.getElementById('create-folder-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var input = document.getElementById('new-folder-name');
+    var name = input.value.trim();
+    if (!name) { alert('Enter a folder name'); return; }
+    var url = currentPath ? '/files/create-folder/' + encodeSubpath(currentPath) : '/files/create-folder';
+    fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { alert('Error: ' + d.error); }
+        else { location.reload(); }
+    })
+    .catch(function() { alert('Create folder failed'); });
+});
+
+document.getElementById('create-file-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var input = document.getElementById('new-file-name');
+    var name = input.value.trim();
+    if (!name) { alert('Enter a file name'); return; }
+    var url = currentPath ? '/files/create-file/' + encodeSubpath(currentPath) : '/files/create-file';
+    fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name, content: '' })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) { alert('Error: ' + d.error); }
+        else { location.reload(); }
+    })
+    .catch(function() { alert('Create file failed'); });
+});
+
 function deleteFile(path, name) {
     if (!confirm('Delete "' + name + '"? This cannot be undone.')) return;
-    fetch('/files/delete/' + path, { method: 'POST' })
+    fetch('/files/delete/' + encodeSubpath(path), { method: 'POST' })
         .then(function(r) { return r.json(); })
         .then(function(d) {
             if (d.error) { alert('Error: ' + d.error); }

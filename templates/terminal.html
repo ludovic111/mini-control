@@ -27,7 +27,13 @@
 </div>
 
 <div class="card section-gap">
-    <div class="card-header">Output</div>
+    <div class="card-header">
+        Output
+        <div class="header-actions">
+            <button class="btn btn-sm btn-muted" type="button" onclick="copyOutput()">Copy</button>
+            <button class="btn btn-sm btn-danger" type="button" onclick="clearOutput()">Clear</button>
+        </div>
+    </div>
     <div class="card-body">
         <pre class="terminal-output" id="terminal-output">Ready. Type a command above.</pre>
     </div>
@@ -36,8 +42,17 @@
 
 {% block scripts %}
 <script>
+var HISTORY_KEY = 'mini-control-terminal-history';
 var history = [];
 var histIdx = -1;
+var outputEl = document.getElementById('terminal-output');
+
+try {
+    var savedHistory = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    if (Array.isArray(savedHistory)) {
+        history = savedHistory.slice(0, 100);
+    }
+} catch (e) {}
 
 document.getElementById('cmd-form').addEventListener('submit', function(e) {
     e.preventDefault();
@@ -45,8 +60,7 @@ document.getElementById('cmd-form').addEventListener('submit', function(e) {
     var cmd = input.value.trim();
     if (!cmd) return;
     executeCmd(cmd);
-    history.unshift(cmd);
-    histIdx = -1;
+    pushHistory(cmd);
     input.value = '';
 });
 
@@ -64,11 +78,11 @@ document.getElementById('cmd-input').addEventListener('keydown', function(e) {
 function runShortcut(cmd) {
     document.getElementById('cmd-input').value = cmd;
     executeCmd(cmd);
+    pushHistory(cmd);
 }
 
 function executeCmd(cmd) {
-    var output = document.getElementById('terminal-output');
-    output.textContent = '$ ' + cmd + '\nExecuting...\n';
+    outputEl.textContent = '$ ' + cmd + '\nExecuting...\n';
     fetch('/api/terminal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -76,14 +90,40 @@ function executeCmd(cmd) {
     })
     .then(function(r) { return r.json(); })
     .then(function(d) {
-        output.textContent = '$ ' + cmd + '\n' + (d.output || d.error || '(no output)');
+        outputEl.textContent = '$ ' + cmd + '\n' + (d.output || d.error || '(no output)');
         if (d.returncode !== undefined && d.returncode !== 0) {
-            output.textContent += '\n[exit code: ' + d.returncode + ']';
+            outputEl.textContent += '\n[exit code: ' + d.returncode + ']';
         }
     })
     .catch(function() {
-        output.textContent = '$ ' + cmd + '\nError: Request failed';
+        outputEl.textContent = '$ ' + cmd + '\nError: Request failed';
     });
+}
+
+function pushHistory(cmd) {
+    history = history.filter(function(item) { return item !== cmd; });
+    history.unshift(cmd);
+    if (history.length > 100) {
+        history = history.slice(0, 100);
+    }
+    histIdx = -1;
+    try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+    } catch (e) {}
+}
+
+function copyOutput() {
+    var text = outputEl.textContent || '';
+    if (!text.trim()) return;
+    navigator.clipboard.writeText(text).then(function() {
+        alert('Output copied to clipboard');
+    }).catch(function() {
+        alert('Could not copy output');
+    });
+}
+
+function clearOutput() {
+    outputEl.textContent = 'Ready. Type a command above.';
 }
 </script>
 {% endblock %}
