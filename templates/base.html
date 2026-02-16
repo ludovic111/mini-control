@@ -42,6 +42,9 @@
             <li><a href="{{ url_for('logs') }}" class="{% if request.endpoint == 'logs' %}active{% endif %}">
                 <span class="nav-icon">&#128220;</span> Logs
             </a></li>
+            <li><a href="{{ url_for('changelog') }}" class="{% if request.endpoint == 'changelog' %}active{% endif %}">
+                <span class="nav-icon">&#128221;</span> Changelog
+            </a></li>
         </ul>
         <div class="sidebar-footer">
             <a href="{{ url_for('logout') }}" class="logout-btn">Logout</a>

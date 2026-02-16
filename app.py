@@ -110,6 +110,54 @@ def build_logs_cmd(source, lines, grep_filter=''):
     return cmd, None
 
 
+def load_git_updates(limit=500):
+    """Load git commit history for the changelog page."""
+    repo_root = Path(__file__).resolve().parent
+    commits = []
+    try:
+        result = subprocess.run(
+            [
+                'git', '-C', str(repo_root), 'log',
+                '--date=short',
+                '--pretty=format:%h%x1f%ad%x1f%an%x1f%s'
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False
+        )
+        if result.returncode != 0:
+            return commits
+
+        for line in result.stdout.splitlines():
+            parts = line.split('\x1f')
+            if len(parts) != 4:
+                continue
+            commits.append({
+                'short_hash': parts[0],
+                'date': parts[1],
+                'author': parts[2],
+                'subject': parts[3],
+            })
+            if len(commits) >= limit:
+                break
+    except Exception:
+        return []
+    return commits
+
+
+def load_changelog_notes():
+    """Load local CHANGELOG.md content if present."""
+    path = Path(__file__).resolve().parent / 'CHANGELOG.md'
+    try:
+        if path.exists():
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                return f.read()
+    except Exception:
+        pass
+    return ''
+
+
 def get_cpu_temp():
     """Get CPU temperature via psutil or thermal zone."""
     try:
@@ -1034,6 +1082,18 @@ def package_remove():
 @login_required
 def logs():
     return render_template('logs.html')
+
+
+@app.route('/changelog')
+@login_required
+def changelog():
+    commits = load_git_updates()
+    notes = load_changelog_notes()
+    return render_template(
+        'changelog.html',
+        commits=commits,
+        notes=notes,
+    )
 
 
 @app.route('/api/logs')

@@ -4,13 +4,14 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 
 ## Current Machine Context
 
-- Hardware: Mac Mini Mid-2006
-- CPU: Intel Core Duo T2300 (32-bit only, i686/i386)
+- Model: Mac Mini Mid-2006
+- CPU: Intel Core Duo T2300
+- Architecture: 32-bit ONLY (`i686/i386`)
 - RAM: 2GB
-- OS: Debian 12 Bookworm (i386)
+- OS: Debian 12 Bookworm (`i386`)
 - User: `ludovic`
 - Server IP: `192.168.1.50`
-- Main panel pages: Dashboard, Services, Files, Terminal, Network, Packages, Logs
+- Main panel pages: Dashboard, Services, Files, Terminal, Network, Packages, Logs, Changelog
 - Auth model: session-based login with password stored in `config.py` (`PASSWORD`)
 
 ## Features
@@ -22,6 +23,7 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 - **Network Info** - IP, MAC, gateway, DNS, ping tests, active connections
 - **Package Manager** - Search, install, remove apt packages
 - **Logs Viewer** - journalctl, dmesg, syslog with filtering, auto-refresh, and log downloads
+- **Changelog** - Full git commit history + local `CHANGELOG.md` release notes
 
 ## Requirements
 

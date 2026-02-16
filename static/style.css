@@ -645,6 +645,16 @@ textarea:focus {
     word-break: break-word;
 }
 
+.changelog-message {
+    max-width: 520px;
+    word-break: break-word;
+}
+
+.changelog-notes {
+    max-height: 460px;
+    overflow-y: auto;
+}
+
 /* === Command Rows === */
 .terminal-input-row {
     display: flex;

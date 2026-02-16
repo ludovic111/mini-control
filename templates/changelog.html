@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Changelog - Mini Control{% endblock %}
+{% block page_title %}Changelog{% endblock %}
+{% block page_subtitle %}Track every update from git history and release notes{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        Git Update History
+        <span class="text-muted">{{ commits|length }} commits</span>
+    </div>
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Commit</th>
+                        <th>Date</th>
+                        <th>Author</th>
+                        <th>Message</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for commit in commits %}
+                    <tr>
+                        <td><code>{{ commit.short_hash }}</code></td>
+                        <td>{{ commit.date }}</td>
+                        <td>{{ commit.author }}</td>
+                        <td class="changelog-message">{{ commit.subject }}</td>
+                    </tr>
+                    {% endfor %}
+                    {% if not commits %}
+                    <tr><td colspan="4" class="text-center">No git updates found.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="card section-gap-lg">
+    <div class="card-header">Release Notes (CHANGELOG.md)</div>
+    <div class="card-body">
+        {% if notes %}
+        <pre class="info-pre changelog-notes">{{ notes }}</pre>
+        {% else %}
+        <p class="text-muted">No CHANGELOG.md found in this project.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
