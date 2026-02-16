@@ -74,7 +74,13 @@
             <div class="welcome-icon">&#129302;</div>
             <h3>AI Assistant</h3>
             <p>Ask me anything about your Mac Mini server. I can help with system administration, troubleshooting, and configuration.</p>
-            <p class="text-muted">I can see your system stats in real-time, suggest commands you can run directly, and edit any file on the system.</p>
+            <p class="text-muted">I can see your system stats in real-time and help draft commands.</p>
+            {% if not assistant_exec_enabled %}
+            <p class="text-muted">Command execution from chat is disabled by server policy.</p>
+            {% endif %}
+            {% if not assistant_file_editor_enabled %}
+            <p class="text-muted">Assistant file editor is disabled by server policy.</p>
+            {% endif %}
         </div>
     </div>
 
@@ -111,6 +117,8 @@
 <script>
 var sending = false;
 var currentEditPath = '';
+var assistantExecEnabled = {{ assistant_exec_enabled|tojson }};
+var assistantFileEditorEnabled = {{ assistant_file_editor_enabled|tojson }};
 
 function toggleSettings() {
     var panel = document.getElementById('settings-panel');
@@ -290,10 +298,10 @@ function renderMarkdown(text) {
             var filepath = isFilepath ? lang.slice(9) : '';
 
             html += '<div class="code-block-wrapper">';
-            if (isBash) {
+            if (isBash && assistantExecEnabled) {
                 html += '<button class="btn btn-sm btn-success code-run-btn" data-cmd="' + escAttr(code.trim()) + '">Run on server</button>';
             }
-            if (isFilepath && filepath) {
+            if (isFilepath && filepath && assistantFileEditorEnabled) {
                 html += '<button class="btn btn-sm btn-primary code-edit-btn" data-path="' + escAttr(filepath) + '">Open in editor</button>';
                 html += '<span class="code-filepath">' + escHtml(filepath) + '</span>';
             }
@@ -362,6 +370,10 @@ function attachEditButtons(bubble) {
 // --- File Editor ---
 
 function openFileEditor(filepath) {
+    if (!assistantFileEditorEnabled) {
+        alert('Assistant file editor is disabled by server policy.');
+        return;
+    }
     if (!filepath) {
         filepath = prompt('Enter the full file path to edit:');
         if (!filepath) return;

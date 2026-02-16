@@ -3,6 +3,7 @@
 
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -29,6 +30,9 @@ import config
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
 app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024 * 1024  # 10GB uploads for movies
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = False
 
 HISTORY_LIMIT = 720  # 60 minutes @ 5-second samples
 STATS_INTERVAL = 5
@@ -59,6 +63,29 @@ MOVIE_NOISE_TOKENS = {
 MOVIE_YEAR_RE = re.compile(r'(?<!\d)(19\d{2}|20\d{2})(?!\d)')
 
 MOVIE_CACHE_LOCK = threading.Lock()
+
+LOGIN_ATTEMPTS = {}
+LOGIN_ATTEMPTS_LOCK = threading.Lock()
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_MAX_ATTEMPTS = 8
+LOGIN_LOCK_SECONDS = 15 * 60
+
+
+def parse_allowed_networks(raw_value):
+    """Parse PANEL_ALLOWED_SUBNETS into a list of ip_network objects."""
+    networks = []
+    for entry in str(raw_value or '').split(','):
+        token = entry.strip()
+        if not token:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(token, strict=False))
+        except ValueError:
+            continue
+    return networks
+
+
+ALLOWED_NETWORKS = parse_allowed_networks(config.ALLOWED_SUBNETS)
 
 
 def append_capped(history, entry):
@@ -150,6 +177,171 @@ def login_required(f):
     return decorated
 
 
+def get_client_identifier():
+    """Return a stable identifier for rate limiting and network checks."""
+    return (request.remote_addr or 'unknown').strip()
+
+
+def is_client_ip_allowed(remote_addr):
+    """Check whether the request source IP is inside configured private subnets."""
+    if not ALLOWED_NETWORKS:
+        return True
+
+    try:
+        client_ip = ipaddress.ip_address(str(remote_addr or '').strip())
+    except ValueError:
+        return False
+
+    for network in ALLOWED_NETWORKS:
+        if client_ip.version == network.version and client_ip in network:
+            return True
+        if (
+            isinstance(client_ip, ipaddress.IPv6Address)
+            and client_ip.ipv4_mapped
+            and network.version == 4
+            and client_ip.ipv4_mapped in network
+        ):
+            return True
+    return False
+
+
+def login_lock_remaining(client_id):
+    """Return remaining lock duration in seconds for a client."""
+    now = time.time()
+    with LOGIN_ATTEMPTS_LOCK:
+        state = LOGIN_ATTEMPTS.get(client_id)
+        if not state:
+            return 0
+        locked_until = float(state.get('locked_until', 0) or 0)
+        if locked_until <= now:
+            return 0
+        return int(locked_until - now)
+
+
+def register_login_failure(client_id):
+    """Record a failed login attempt and return lock-until timestamp or 0."""
+    now = time.time()
+    with LOGIN_ATTEMPTS_LOCK:
+        state = LOGIN_ATTEMPTS.get(client_id)
+        if not state or (now - float(state.get('first_attempt', now))) > LOGIN_WINDOW_SECONDS:
+            state = {'count': 0, 'first_attempt': now, 'locked_until': 0}
+
+        locked_until = float(state.get('locked_until', 0) or 0)
+        if locked_until > now:
+            LOGIN_ATTEMPTS[client_id] = state
+            return locked_until
+
+        state['count'] = int(state.get('count', 0) or 0) + 1
+        state['first_attempt'] = float(state.get('first_attempt', now) or now)
+
+        if state['count'] >= LOGIN_MAX_ATTEMPTS:
+            state['count'] = 0
+            state['first_attempt'] = now
+            state['locked_until'] = now + LOGIN_LOCK_SECONDS
+            LOGIN_ATTEMPTS[client_id] = state
+            return state['locked_until']
+
+        state['locked_until'] = 0
+        LOGIN_ATTEMPTS[client_id] = state
+        return 0
+
+
+def clear_login_failures(client_id):
+    """Clear failed login state for a client."""
+    with LOGIN_ATTEMPTS_LOCK:
+        LOGIN_ATTEMPTS.pop(client_id, None)
+
+
+def get_csrf_token():
+    """Get or create a CSRF token in the current session."""
+    token = session.get('csrf_token')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session['csrf_token'] = token
+        session.modified = True
+    return token
+
+
+def get_request_csrf_token():
+    """Extract CSRF token from request headers, form fields, or JSON body."""
+    header_token = request.headers.get('X-CSRF-Token', '').strip()
+    if header_token:
+        return header_token
+
+    form_token = request.form.get('_csrf_token', '').strip()
+    if form_token:
+        return form_token
+
+    payload = request.get_json(silent=True)
+    if isinstance(payload, dict):
+        json_token = str(payload.get('_csrf_token') or '').strip()
+        if json_token:
+            return json_token
+    return ''
+
+
+def is_json_like_request():
+    """Heuristic to decide whether an error should be returned as JSON."""
+    if request.path.startswith('/api/'):
+        return True
+    if request.path.startswith('/movies/'):
+        return True
+    if request.path.startswith('/assistant/'):
+        return True
+    if request.is_json:
+        return True
+    accept = request.headers.get('Accept', '')
+    return 'application/json' in accept.lower()
+
+
+@app.context_processor
+def inject_template_globals():
+    """Expose CSRF token and feature flags to templates."""
+    return {
+        'csrf_token': get_csrf_token(),
+        'feature_flags': {
+            'enable_web_terminal': config.ENABLE_WEB_TERMINAL,
+            'enable_assistant_exec': config.ENABLE_ASSISTANT_EXEC,
+            'enable_assistant_file_editor': config.ENABLE_ASSISTANT_FILE_EDITOR,
+        },
+    }
+
+
+@app.after_request
+def add_security_headers(response):
+    """Attach browser-side hardening headers."""
+    response.headers.setdefault('X-Frame-Options', 'DENY')
+    response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    response.headers.setdefault('Referrer-Policy', 'same-origin')
+    return response
+
+
+@app.before_request
+def enforce_private_network_access():
+    """Block public-network clients by default."""
+    if request.endpoint == 'static':
+        return None
+    if is_client_ip_allowed(request.remote_addr):
+        return None
+    if is_json_like_request():
+        return jsonify({'error': 'Access denied from this network'}), 403
+    abort(403)
+
+
+@app.before_request
+def enforce_csrf():
+    """Require CSRF token on state-changing requests."""
+    if request.method in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
+        return None
+    expected = session.get('csrf_token', '')
+    provided = get_request_csrf_token()
+    if expected and provided and secrets.compare_digest(expected, provided):
+        return None
+    if is_json_like_request():
+        return jsonify({'error': 'Invalid CSRF token'}), 400
+    abort(400)
+
+
 @app.before_request
 def ensure_background_workers():
     """Ensure lightweight background workers are running."""
@@ -188,7 +380,25 @@ def safe_path(requested_path):
     """Resolve path and ensure it stays within FILE_ROOT."""
     root = Path(config.FILE_ROOT).resolve()
     target = (root / requested_path).resolve()
-    if not str(target).startswith(str(root)):
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return None
+    return target
+
+
+def safe_editor_path(requested_path):
+    """Resolve absolute/relative file editor path and keep it inside FILE_ROOT."""
+    if not requested_path:
+        return None
+    root = Path(config.FILE_ROOT).resolve()
+    target = Path(requested_path).expanduser()
+    if not target.is_absolute():
+        target = root / target
+    target = target.resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
         return None
     return target
 
@@ -238,127 +448,6 @@ def build_logs_cmd(source, lines, grep_filter=''):
         safe_filter = shlex.quote(grep_filter)
         cmd += f' | grep -i {safe_filter}'
     return cmd, None
-
-
-def detect_speedtest_command():
-    """Detect an available speedtest command and expected output format."""
-    _, _, rc = run_cmd('command -v speedtest')
-    if rc == 0:
-        return {
-            'cmd': 'speedtest --accept-license --accept-gdpr --format=json',
-            'format': 'ookla-json',
-        }
-
-    _, _, rc = run_cmd('command -v speedtest-cli')
-    if rc == 0:
-        return {
-            'cmd': 'speedtest-cli --json',
-            'format': 'legacy-json',
-        }
-
-    return None
-
-
-def parse_speedtest_simple_output(output_text):
-    """Parse fallback plain-text speedtest output."""
-    ping_match = re.search(r'Ping:\s*([\d.]+)\s*ms', output_text, re.IGNORECASE)
-    down_match = re.search(r'Download:\s*([\d.]+)\s*Mbit/s', output_text, re.IGNORECASE)
-    up_match = re.search(r'Upload:\s*([\d.]+)\s*Mbit/s', output_text, re.IGNORECASE)
-
-    if not (ping_match and down_match and up_match):
-        return None
-
-    return {
-        'download_mbps': round(float(down_match.group(1)), 2),
-        'upload_mbps': round(float(up_match.group(1)), 2),
-        'ping_ms': round(float(ping_match.group(1)), 2),
-        'server': '',
-        'isp': '',
-    }
-
-
-def parse_speedtest_result(output_text, output_format):
-    """Parse speedtest output into normalized fields."""
-    parsed = None
-
-    if output_format in ('ookla-json', 'legacy-json'):
-        try:
-            payload = json.loads(output_text)
-        except Exception:
-            payload = None
-
-        if isinstance(payload, dict):
-            if output_format == 'ookla-json':
-                # Ookla CLI reports bandwidth in bytes/sec.
-                download = (((payload.get('download') or {}).get('bandwidth')) or 0) * 8 / 1_000_000
-                upload = (((payload.get('upload') or {}).get('bandwidth')) or 0) * 8 / 1_000_000
-                ping = ((payload.get('ping') or {}).get('latency')) or 0
-                server = (payload.get('server') or {}).get('name') or ''
-                isp = payload.get('isp') or ''
-                parsed = {
-                    'download_mbps': round(float(download), 2),
-                    'upload_mbps': round(float(upload), 2),
-                    'ping_ms': round(float(ping), 2),
-                    'server': str(server),
-                    'isp': str(isp),
-                }
-            else:
-                # speedtest-cli --json reports bits/sec for download/upload.
-                download = (payload.get('download') or 0) / 1_000_000
-                upload = (payload.get('upload') or 0) / 1_000_000
-                ping = payload.get('ping') or 0
-                server_info = payload.get('server') or {}
-                client_info = payload.get('client') or {}
-                server_name = server_info.get('sponsor') or server_info.get('name') or ''
-                parsed = {
-                    'download_mbps': round(float(download), 2),
-                    'upload_mbps': round(float(upload), 2),
-                    'ping_ms': round(float(ping), 2),
-                    'server': str(server_name),
-                    'isp': str(client_info.get('isp') or ''),
-                }
-
-    if parsed is None:
-        parsed = parse_speedtest_simple_output(output_text)
-
-    if parsed is None:
-        return None
-
-    parsed['download_mbps'] = max(parsed['download_mbps'], 0.0)
-    parsed['upload_mbps'] = max(parsed['upload_mbps'], 0.0)
-    parsed['ping_ms'] = max(parsed['ping_ms'], 0.0)
-    return parsed
-
-
-def run_speedtest():
-    """Run speedtest command and return normalized result."""
-    command_info = detect_speedtest_command()
-    if not command_info:
-        return None, (
-            'No speedtest tool found. Install one of: '
-            '`sudo apt install speedtest-cli` or Ookla `speedtest` CLI.'
-        )
-
-    stdout, stderr, rc = run_cmd(command_info['cmd'], timeout=240)
-    if rc != 0:
-        # Fallback for legacy installations where --json may not be supported.
-        if command_info['format'] == 'legacy-json':
-            stdout, stderr, rc = run_cmd('speedtest-cli --simple', timeout=240)
-            if rc == 0:
-                parsed = parse_speedtest_result(stdout, 'legacy-simple')
-                if parsed:
-                    parsed['raw_output'] = stdout
-                    parsed['tool'] = 'speedtest-cli --simple'
-                    return parsed, None
-        return None, (stderr or stdout or 'Speedtest command failed')
-
-    parsed = parse_speedtest_result(stdout, command_info['format'])
-    if not parsed:
-        return None, 'Could not parse speedtest output'
-
-    parsed['raw_output'] = stdout
-    parsed['tool'] = command_info['cmd']
-    return parsed, None
 
 
 def format_uptime():
@@ -1287,10 +1376,23 @@ def remove_movie_from_cache(relative_path):
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    client_id = get_client_identifier()
     if request.method == 'POST':
+        remaining = login_lock_remaining(client_id)
+        if remaining > 0:
+            minutes = max(1, int((remaining + 59) // 60))
+            flash(f'Too many failed attempts. Try again in {minutes} minute(s).', 'error')
+            return render_template('login.html'), 429
+
         if request.form.get('password') == config.PASSWORD:
+            clear_login_failures(client_id)
             session['logged_in'] = True
             return redirect(url_for('dashboard'))
+
+        lock_until = register_login_failure(client_id)
+        if lock_until > time.time():
+            flash('Too many failed attempts. Login temporarily locked.', 'error')
+            return render_template('login.html'), 429
         flash('Invalid password', 'error')
     return render_template('login.html')
 
@@ -1394,6 +1496,7 @@ def api_power_cancel():
 
 
 @app.route('/api/power/ping')
+@login_required
 def api_power_ping():
     return jsonify({'online': True, 'ts': int(time.time())})
 
@@ -1618,13 +1721,19 @@ def create_file_root():
 @app.route('/terminal')
 @login_required
 def terminal():
+    if not config.ENABLE_WEB_TERMINAL:
+        flash('Web terminal is disabled by server policy.', 'error')
+        return redirect(url_for('dashboard'))
     return render_template('terminal.html')
 
 
 @app.route('/api/terminal', methods=['POST'])
 @login_required
 def api_terminal():
-    cmd = request.json.get('command', '').strip()
+    if not config.ENABLE_WEB_TERMINAL:
+        return jsonify({'error': 'Web terminal is disabled by server policy'}), 403
+    data = request.get_json(silent=True) or {}
+    cmd = str(data.get('command', '')).strip()
     if not cmd:
         return jsonify({'error': 'Empty command'}), 400
     stdout, stderr, rc = run_cmd(cmd, timeout=30)
@@ -2130,13 +2239,16 @@ def assistant():
     auth_method = get_auth_method()
     return render_template('assistant.html',
         has_key=has_key, masked_key=masked_key,
-        has_oauth=has_oauth, auth_method=auth_method)
+        has_oauth=has_oauth, auth_method=auth_method,
+        assistant_exec_enabled=config.ENABLE_ASSISTANT_EXEC,
+        assistant_file_editor_enabled=config.ENABLE_ASSISTANT_FILE_EDITOR)
 
 
 @app.route('/assistant/settings', methods=['POST'])
 @login_required
 def assistant_settings():
-    api_key = request.json.get('api_key', '').strip()
+    data = request.get_json(silent=True) or {}
+    api_key = str(data.get('api_key', '')).strip()
     if not api_key:
         return jsonify({'error': 'No API key provided'}), 400
     if not api_key.startswith('sk-ant-'):
@@ -2158,8 +2270,9 @@ def assistant_send():
     if not auth:
         return jsonify({'error': 'No API key or OAuth token configured. Add a key or connect via OAuth in Settings.'}), 400
 
-    user_msg = request.json.get('message', '').strip()
-    model = request.json.get('model', 'claude-sonnet-4-20250514')
+    data = request.get_json(silent=True) or {}
+    user_msg = str(data.get('message', '')).strip()
+    model = str(data.get('model', 'claude-sonnet-4-20250514'))
     if not user_msg:
         return jsonify({'error': 'Empty message'}), 400
 
@@ -2203,7 +2316,11 @@ def assistant_send():
 @app.route('/assistant/exec', methods=['POST'])
 @login_required
 def assistant_exec():
-    cmd = request.json.get('command', '').strip()
+    if not config.ENABLE_ASSISTANT_EXEC:
+        return jsonify({'error': 'Assistant command execution is disabled by server policy'}), 403
+
+    data = request.get_json(silent=True) or {}
+    cmd = str(data.get('command', '')).strip()
     if not cmd:
         return jsonify({'error': 'Empty command'}), 400
     stdout, stderr, rc = run_cmd(cmd, timeout=30)
@@ -2226,12 +2343,18 @@ def assistant_clear():
 @app.route('/assistant/file/read', methods=['POST'])
 @login_required
 def assistant_file_read():
-    """Read a file from anywhere on the filesystem."""
-    filepath = request.json.get('path', '').strip()
+    """Read a file from FILE_ROOT for the assistant editor."""
+    if not config.ENABLE_ASSISTANT_FILE_EDITOR:
+        return jsonify({'error': 'Assistant file editor is disabled by server policy'}), 403
+
+    data = request.get_json(silent=True) or {}
+    filepath = str(data.get('path', '')).strip()
     if not filepath:
         return jsonify({'error': 'No path specified'}), 400
 
-    target = Path(filepath).resolve()
+    target = safe_editor_path(filepath)
+    if target is None:
+        return jsonify({'error': f'Path must stay inside {config.FILE_ROOT}'}), 403
     if not target.exists():
         return jsonify({'error': f'File not found: {filepath}'}), 404
     if not target.is_file():
@@ -2240,14 +2363,10 @@ def assistant_file_read():
         return jsonify({'error': f'File too large (max {MAX_FILE_SIZE // 1024 // 1024}MB)'}), 400
 
     try:
-        with open(str(target), 'r', errors='replace') as f:
+        with open(str(target), 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
         return jsonify({'content': content, 'path': str(target)})
     except PermissionError:
-        # Try with sudo cat
-        stdout, stderr, rc = run_cmd(f'sudo cat {shlex.quote(str(target))}', timeout=10)
-        if rc == 0:
-            return jsonify({'content': stdout, 'path': str(target)})
         return jsonify({'error': f'Permission denied: {filepath}'}), 403
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -2256,36 +2375,35 @@ def assistant_file_read():
 @app.route('/assistant/file/write', methods=['POST'])
 @login_required
 def assistant_file_write():
-    """Write content to a file anywhere on the filesystem."""
-    filepath = request.json.get('path', '').strip()
-    content = request.json.get('content', '')
+    """Write content to a file inside FILE_ROOT for the assistant editor."""
+    if not config.ENABLE_ASSISTANT_FILE_EDITOR:
+        return jsonify({'error': 'Assistant file editor is disabled by server policy'}), 403
+
+    data = request.get_json(silent=True) or {}
+    filepath = str(data.get('path', '')).strip()
+    content = data.get('content', '')
     if not filepath:
         return jsonify({'error': 'No path specified'}), 400
 
-    target = Path(filepath).resolve()
+    if not isinstance(content, str):
+        content = str(content)
 
-    # Create parent directories if needed
+    if len(content.encode('utf-8')) > MAX_FILE_SIZE:
+        return jsonify({'error': f'Content too large (max {MAX_FILE_SIZE // 1024 // 1024}MB)'}), 400
+
+    target = safe_editor_path(filepath)
+    if target is None:
+        return jsonify({'error': f'Path must stay inside {config.FILE_ROOT}'}), 403
+    if target.exists() and not target.is_file():
+        return jsonify({'error': f'Not a regular file: {filepath}'}), 400
+
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-    except PermissionError:
-        pass  # Will try sudo below
-
-    try:
-        with open(str(target), 'w') as f:
+        with open(str(target), 'w', encoding='utf-8') as f:
             f.write(content)
         return jsonify({'status': 'ok', 'path': str(target)})
     except PermissionError:
-        # Write via sudo tee
-        try:
-            proc = subprocess.run(
-                f'sudo tee {shlex.quote(str(target))}',
-                shell=True, input=content, capture_output=True, text=True, timeout=10
-            )
-            if proc.returncode == 0:
-                return jsonify({'status': 'ok', 'path': str(target)})
-            return jsonify({'error': f'Permission denied (sudo failed): {proc.stderr}'}), 403
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
+        return jsonify({'error': f'Permission denied: {filepath}'}), 403
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -2306,12 +2424,6 @@ def network():
         gateway=gw_out,
         dns=dns_out,
     )
-
-
-@app.route('/speedtest')
-@login_required
-def speedtest():
-    return render_template('speedtest.html')
 
 
 @app.route('/api/ping/<target>')
@@ -2338,15 +2450,6 @@ def api_ping(target):
 def api_connections():
     stdout, _, _ = run_cmd('ss -tuln', timeout=10)
     return jsonify({'output': stdout})
-
-
-@app.route('/api/speedtest/run', methods=['POST'])
-@login_required
-def api_speedtest_run():
-    result, error = run_speedtest()
-    if error:
-        return jsonify({'error': error}), 500
-    return jsonify({'status': 'ok', 'result': result})
 
 
 # --- Package Manager ---

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Mini Control panel for the Mac Mini Debian server">
+    <meta name="csrf-token" content="{{ csrf_token }}">
     <title>{% block title %}Mini Control{% endblock %}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -30,17 +31,16 @@
             <li><a href="{{ url_for('movies') }}" class="{% if request.endpoint and request.endpoint.startswith('movies') %}active{% endif %}">
                 <span class="nav-icon">&#127909;</span> Movies
             </a></li>
+            {% if feature_flags.enable_web_terminal %}
             <li><a href="{{ url_for('terminal') }}" class="{% if request.endpoint == 'terminal' %}active{% endif %}">
                 <span class="nav-icon">&#62;&gt;_</span> Terminal
             </a></li>
+            {% endif %}
             <li><a href="{{ url_for('assistant') }}" class="{% if request.endpoint == 'assistant' %}active{% endif %}">
                 <span class="nav-icon">&#129302;</span> AI Assistant
             </a></li>
             <li><a href="{{ url_for('network') }}" class="{% if request.endpoint == 'network' %}active{% endif %}">
                 <span class="nav-icon">&#127760;</span> Network
-            </a></li>
-            <li><a href="{{ url_for('speedtest') }}" class="{% if request.endpoint == 'speedtest' %}active{% endif %}">
-                <span class="nav-icon">&#128246;</span> Speedtest
             </a></li>
             <li><a href="{{ url_for('packages') }}" class="{% if request.endpoint == 'packages' %}active{% endif %}">
                 <span class="nav-icon">&#128230;</span> Packages
@@ -96,6 +96,8 @@
         var sidebar = document.getElementById('app-sidebar');
         var toggle = document.getElementById('menu-toggle');
         var backdrop = document.querySelector('.sidebar-backdrop');
+        var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        var csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
 
         function closeSidebar() {
             sidebar.classList.remove('open');
@@ -124,6 +126,72 @@
                 closeSidebar();
             }
         });
+
+        function isUnsafeMethod(method) {
+            var upper = String(method || 'GET').toUpperCase();
+            return ['POST', 'PUT', 'PATCH', 'DELETE'].indexOf(upper) !== -1;
+        }
+
+        function isSameOrigin(url) {
+            if (!url) return true;
+            try {
+                var parsed = new URL(url, window.location.origin);
+                return parsed.origin === window.location.origin;
+            } catch (err) {
+                return true;
+            }
+        }
+
+        if (csrfToken && window.fetch) {
+            var originalFetch = window.fetch.bind(window);
+            window.fetch = function(input, init) {
+                var options = init || {};
+                var method = options.method || (input && input.method) || 'GET';
+                var url = typeof input === 'string' ? input : (input && input.url) || '';
+
+                if (isUnsafeMethod(method) && isSameOrigin(url)) {
+                    var headers = new Headers(options.headers || (input && input.headers) || {});
+                    if (!headers.has('X-CSRF-Token')) {
+                        headers.set('X-CSRF-Token', csrfToken);
+                    }
+                    options.headers = headers;
+                }
+                return originalFetch(input, options);
+            };
+        }
+
+        if (csrfToken && window.XMLHttpRequest) {
+            var originalOpen = XMLHttpRequest.prototype.open;
+            var originalSend = XMLHttpRequest.prototype.send;
+
+            XMLHttpRequest.prototype.open = function(method, url) {
+                this.__mcMethod = method || 'GET';
+                this.__mcUrl = url || '';
+                return originalOpen.apply(this, arguments);
+            };
+
+            XMLHttpRequest.prototype.send = function(body) {
+                if (isUnsafeMethod(this.__mcMethod) && isSameOrigin(this.__mcUrl)) {
+                    try {
+                        this.setRequestHeader('X-CSRF-Token', csrfToken);
+                    } catch (err) {
+                        // Ignore header injection errors for unsupported request states.
+                    }
+                }
+                return originalSend.apply(this, arguments);
+            };
+        }
+
+        if (csrfToken) {
+            document.querySelectorAll('form[method="post"], form[method="POST"]').forEach(function(form) {
+                if (form.querySelector('input[name="_csrf_token"]')) return;
+                var tokenField = document.createElement('input');
+                tokenField.type = 'hidden';
+                tokenField.name = '_csrf_token';
+                tokenField.value = csrfToken;
+                form.appendChild(tokenField);
+            });
+        }
     })();
     </script>
     {% block scripts %}{% endblock %}

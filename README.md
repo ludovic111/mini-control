@@ -11,8 +11,8 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 - OS: Debian 12 Bookworm (`i386`)
 - User: `ludovic`
 - Server IP: `192.168.1.50`
-- Main panel pages: Dashboard, Services, Files, Movies, Terminal, Network, Speedtest, Packages, Scheduler, Logs, Changelog
-- Auth model: session-based login with password stored in `config.py` (`PASSWORD`)
+- Main panel pages: Dashboard, Services, Files, Movies, Terminal, Network, Packages, Scheduler, Logs, Changelog
+- Auth model: session-based login with password loaded from `PANEL_PASSWORD` or generated in `~/.mini-control-password`
 
 ## Features
 
@@ -23,7 +23,6 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 - **Movies** - Local movie browser with drag/drop uploads, OMDb metadata lookup/cache, streaming, and delete controls
 - **System Terminal** - Execute commands with shortcut buttons, persistent history, copy/clear output
 - **Network Info** - IP, MAC, gateway, DNS, ping tests, active connections
-- **Internet Speedtest** - Run download/upload/latency tests from the server and inspect raw output
 - **Package Manager** - Search, install, remove apt packages
 - **Scheduler** - Manage user cron jobs (add, edit, delete, quick presets, next run time)
 - **Logs Viewer** - journalctl, dmesg, syslog with filtering, auto-refresh, and log downloads
@@ -35,7 +34,6 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 - Debian 12 (i386) with Python 3.11
 - 2GB RAM (panel uses ~20-30MB)
 - SSH access
-- Optional for Speedtest tab: `speedtest` CLI or `speedtest-cli`
 - Optional for Movies tab: an [OMDb API key](https://www.omdbapi.com/apikey.aspx) stored in `~/.mini-control-omdb-key`
 
 ## Installation
@@ -77,9 +75,16 @@ ssh ludovic@192.168.1.50 "sudo systemctl restart mini-control && sudo systemctl 
 
 ### 4. Login
 
-Default password: `minilinux2006`
+Password source:
 
-Change it in `config.py` or set the `PANEL_PASSWORD` environment variable.
+- `PANEL_PASSWORD` environment variable (if set), or
+- auto-generated file: `~/.mini-control-password`
+
+Show current password on the server:
+
+```bash
+cat /home/ludovic/.mini-control-password
+```
 
 ## Managing the Service
 
@@ -99,18 +104,27 @@ journalctl -u mini-control -f
 
 ## Configuration
 
-Edit `config.py` to change:
+Environment variables:
 
-- `PASSWORD` - Login password
-- `SECRET_KEY` - Flask session secret
-- `PORT` - Web server port (default: 5000)
-- `FILE_ROOT` - Root directory for file manager
+- `PANEL_PASSWORD` - Login password override
+- `SECRET_KEY` - Flask session secret override
+- `PANEL_HOST` - Bind host (default: `0.0.0.0`)
+- `PANEL_PORT` - Bind port (default: `5000`)
+- `FILE_ROOT` - Root directory for file manager (default: `/home/ludovic`)
+- `PANEL_ALLOWED_SUBNETS` - Comma-separated CIDR allowlist (default private LAN ranges)
+- `ENABLE_WEB_TERMINAL` - `true/false` (default `false`)
+- `ENABLE_ASSISTANT_EXEC` - `true/false` (default `false`)
+- `ENABLE_ASSISTANT_FILE_EDITOR` - `true/false` (default `false`)
 
 ## Security Notes
 
-- Change the default password immediately after setup
 - The panel runs as user `ludovic`, not root
+- Login password and Flask secret are generated automatically if not provided
+- Access is restricted to private/loopback subnets by default
+- CSRF protection is enabled for state-changing requests
 - Sudo permissions are limited to systemctl and apt-get operations
+- Assistant file read/write does not use sudo and is restricted to `FILE_ROOT`
+- Web terminal, assistant command execution, and assistant file editor are disabled by default (opt-in via env vars)
 - File manager is restricted to `/home/ludovic`
 - For Power actions, add sudoers rules:
   - `ludovic ALL=(ALL) NOPASSWD: /sbin/reboot`

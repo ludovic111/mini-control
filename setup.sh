@@ -40,8 +40,6 @@ ludovic ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart *
 ludovic ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable *
 ludovic ALL=(ALL) NOPASSWD: /usr/bin/apt-get install *
 ludovic ALL=(ALL) NOPASSWD: /usr/bin/apt-get remove *
-ludovic ALL=(ALL) NOPASSWD: /usr/bin/tee *
-ludovic ALL=(ALL) NOPASSWD: /usr/bin/cat *
 ludovic ALL=(ALL) NOPASSWD: /sbin/reboot
 ludovic ALL=(ALL) NOPASSWD: /sbin/shutdown *
 SUDOERS
@@ -56,7 +54,11 @@ echo "=== Setup Complete ==="
 echo ""
 IP=$(hostname -I | awk '{print $1}')
 echo "Control Panel URL: http://${IP}:5000"
-echo "Default password:  minilinux2006"
+if [ -f /home/ludovic/.mini-control-password ]; then
+    echo "Panel password:    $(cat /home/ludovic/.mini-control-password)"
+else
+    echo "Panel password:    (created on first app start) check /home/ludovic/.mini-control-password"
+fi
 echo "OMDb key file:     /home/ludovic/.mini-control-omdb-key (optional, for Movies metadata)"
 echo ""
 echo "Service status:"
