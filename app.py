@@ -21,7 +21,7 @@ import psutil
 import requests as http_requests
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    session, jsonify, send_file, flash, abort, Response
+    session, jsonify, send_file, flash, abort, Response, send_from_directory
 )
 
 import config
@@ -40,6 +40,39 @@ NET_HISTORY = []
 HISTORY_LOCK = threading.Lock()
 STATS_THREAD_LOCK = threading.Lock()
 STATS_THREAD_STARTED = False
+
+MOVIES_ROOT = Path('/home/ludovic/movies')
+MOVIE_METADATA_CACHE_FILE = MOVIES_ROOT / '.metadata_cache.json'
+TMDB_KEY_FILE = Path(os.path.expanduser('~/.mini-control-tmdb-key'))
+TMDB_API_BASE = 'https://api.themoviedb.org/3'
+TMDB_POSTER_BASE_URL = 'https://image.tmdb.org/t/p/w500'
+TMDB_BACKDROP_BASE_URL = 'https://image.tmdb.org/t/p/w1280'
+TRANSMISSION_RPC_URL = 'http://localhost:9091/transmission/rpc'
+
+VIDEO_EXTENSIONS = {'.mkv', '.mp4', '.avi', '.m4v', '.mov', '.wmv', '.flv', '.webm'}
+MOVIE_NOISE_TOKENS = {
+    '1080p', '720p', '2160p', '480p', '360p', '4k', '8k',
+    'bluray', 'bdrip', 'brrip', 'webrip', 'webdl', 'web-dl', 'hdrip', 'hdtv', 'dvdrip',
+    'x264', 'x265', 'h264', 'h265', 'hevc', 'xvid', 'aac', 'ac3', 'dts', 'ddp', 'atmos',
+    'proper', 'repack', 'extended', 'unrated', 'remastered', 'remux',
+    'yts', 'yify', 'rarbg', 'evo', 'etrg', 'nf', 'amzn',
+    'multi', 'dubbed', 'subbed', 'dual', 'audio',
+}
+MOVIE_YEAR_RE = re.compile(r'(?<!\d)(19\d{2}|20\d{2})(?!\d)')
+
+TRANSMISSION_STATUS_LABELS = {
+    0: 'Paused',
+    1: 'Verifying Queued',
+    2: 'Verifying',
+    3: 'Queued',
+    4: 'Downloading',
+    5: 'Seeding Queued',
+    6: 'Seeding',
+}
+
+MOVIE_CACHE_LOCK = threading.Lock()
+TRANSMISSION_SESSION_LOCK = threading.Lock()
+TRANSMISSION_SESSION_ID = ''
 
 
 def append_capped(history, entry):
@@ -827,6 +860,508 @@ def check_service(name):
     return rc == 0
 
 
+def is_video_file(path):
+    """Return True when a file has a known movie/video extension."""
+    return path.suffix.lower() in VIDEO_EXTENSIONS
+
+
+def resolve_movie_path(relative_path):
+    """Resolve a user-provided movie path inside MOVIES_ROOT."""
+    if not relative_path:
+        return None
+    root = MOVIES_ROOT.resolve()
+    candidate = (root / relative_path).resolve()
+    if candidate == root:
+        return None
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate
+
+
+def load_tmdb_key():
+    """Load TMDB API key from ~/.mini-control-tmdb-key."""
+    try:
+        if TMDB_KEY_FILE.exists():
+            return TMDB_KEY_FILE.read_text(encoding='utf-8', errors='replace').strip()
+    except Exception:
+        return ''
+    return ''
+
+
+def save_tmdb_key(api_key):
+    """Persist TMDB API key to ~/.mini-control-tmdb-key."""
+    key = (api_key or '').strip()
+    try:
+        if not key:
+            if TMDB_KEY_FILE.exists():
+                TMDB_KEY_FILE.unlink()
+            return True, 'TMDB API key removed'
+        TMDB_KEY_FILE.write_text(key + '\n', encoding='utf-8')
+        os.chmod(str(TMDB_KEY_FILE), 0o600)
+        return True, 'TMDB API key saved'
+    except Exception as exc:
+        return False, str(exc)
+
+
+def load_movie_metadata_cache():
+    """Load cached movie metadata JSON."""
+    try:
+        if not MOVIE_METADATA_CACHE_FILE.exists():
+            return {'version': 1, 'movies': {}}
+        with open(MOVIE_METADATA_CACHE_FILE, 'r', encoding='utf-8', errors='replace') as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            return {'version': 1, 'movies': {}}
+        movies = payload.get('movies')
+        if not isinstance(movies, dict):
+            payload['movies'] = {}
+        return payload
+    except Exception:
+        return {'version': 1, 'movies': {}}
+
+
+def save_movie_metadata_cache(cache_payload):
+    """Save movie metadata cache atomically."""
+    try:
+        MOVIES_ROOT.mkdir(parents=True, exist_ok=True)
+        tmp_path = MOVIE_METADATA_CACHE_FILE.with_suffix('.tmp')
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(cache_payload, f, indent=2, ensure_ascii=False)
+        os.replace(str(tmp_path), str(MOVIE_METADATA_CACHE_FILE))
+        return True
+    except Exception:
+        return False
+
+
+def sanitize_movie_title_tokens(text):
+    """Remove common release tags/noise from movie names."""
+    cleaned_tokens = []
+    for token in re.split(r'[\s._-]+', text.strip()):
+        if not token:
+            continue
+        token_clean = re.sub(r'[^A-Za-z0-9]+', '', token)
+        if not token_clean:
+            continue
+        lower = token_clean.lower()
+        if lower in MOVIE_NOISE_TOKENS:
+            continue
+        if re.fullmatch(r'(19|20)\d{2}', lower):
+            continue
+        if re.fullmatch(r'\d{3,4}p', lower):
+            continue
+        if re.fullmatch(r'[xh]26[45]', lower):
+            continue
+        if re.fullmatch(r'\d+bit', lower):
+            continue
+        if re.fullmatch(r'cd\d+', lower):
+            continue
+        cleaned_tokens.append(token_clean)
+
+    title = ' '.join(cleaned_tokens).strip()
+    title = re.sub(r'\s+', ' ', title)
+    return title
+
+
+def parse_movie_filename(filename):
+    """Infer title and year hints from a movie filename."""
+    stem = Path(filename).stem
+    year_hint = None
+
+    year_match = MOVIE_YEAR_RE.search(stem)
+    if year_match:
+        try:
+            year_hint = int(year_match.group(1))
+        except Exception:
+            year_hint = None
+
+    title_hint = ''
+    if year_match and year_match.start() > 0:
+        title_hint = sanitize_movie_title_tokens(stem[:year_match.start()])
+    if not title_hint:
+        title_hint = sanitize_movie_title_tokens(stem)
+    if not title_hint:
+        title_hint = re.sub(r'[\._-]+', ' ', stem).strip()
+
+    return title_hint or stem, year_hint
+
+
+def tmdb_image_url(path_fragment, base_url):
+    """Build TMDB image URL from poster/backdrop path."""
+    if not path_fragment:
+        return ''
+    return f'{base_url}{path_fragment}'
+
+
+def extract_release_year(date_text):
+    """Extract year from YYYY-MM-DD date text."""
+    if not date_text:
+        return None
+    try:
+        return int(str(date_text)[:4])
+    except Exception:
+        return None
+
+
+def tmdb_request(path, params=None):
+    """Perform a GET request against TMDB API."""
+    api_key = load_tmdb_key()
+    if not api_key:
+        return None, 'TMDB API key is not configured'
+
+    request_params = dict(params or {})
+    request_params['api_key'] = api_key
+
+    try:
+        response = http_requests.get(
+            f'{TMDB_API_BASE}{path}',
+            params=request_params,
+            timeout=15
+        )
+    except http_requests.RequestException as exc:
+        return None, f'TMDB request failed: {exc}'
+
+    if response.status_code == 401:
+        return None, 'TMDB API key is invalid'
+    if response.status_code >= 400:
+        return None, f'TMDB API returned HTTP {response.status_code}'
+
+    try:
+        return response.json(), None
+    except Exception:
+        return None, 'TMDB returned invalid JSON'
+
+
+def select_tmdb_result(results, year_hint=None):
+    """Pick the best TMDB search result with optional year hint."""
+    if not results:
+        return None
+
+    def score(result):
+        value = float(result.get('popularity') or 0.0)
+        result_year = extract_release_year(result.get('release_date', ''))
+        if year_hint and result_year == year_hint:
+            value += 1000
+        elif year_hint and result_year and abs(result_year - year_hint) <= 1:
+            value += 200
+        return value
+
+    return max(results, key=score)
+
+
+def normalize_tmdb_metadata(search_item, details_item):
+    """Build normalized movie metadata payload from TMDB objects."""
+    base = details_item or search_item or {}
+    title = base.get('title') or (search_item or {}).get('title') or ''
+    release_date = base.get('release_date') or (search_item or {}).get('release_date') or ''
+    year = extract_release_year(release_date)
+    genres = []
+    for genre in base.get('genres') or []:
+        name = str(genre.get('name', '')).strip()
+        if name:
+            genres.append(name)
+
+    return {
+        'tmdb_id': base.get('id') or (search_item or {}).get('id'),
+        'title': title.strip(),
+        'year': year,
+        'overview': (base.get('overview') or '').strip(),
+        'rating': round(float(base.get('vote_average') or (search_item or {}).get('vote_average') or 0.0), 1),
+        'genres': genres,
+        'runtime': base.get('runtime') if isinstance(base.get('runtime'), int) else None,
+        'poster_url': tmdb_image_url(base.get('poster_path') or (search_item or {}).get('poster_path'), TMDB_POSTER_BASE_URL),
+        'backdrop_url': tmdb_image_url(base.get('backdrop_path') or (search_item or {}).get('backdrop_path'), TMDB_BACKDROP_BASE_URL),
+        'release_date': release_date,
+        'vote_count': int(base.get('vote_count') or (search_item or {}).get('vote_count') or 0),
+    }
+
+
+def fetch_tmdb_metadata(title_hint, year_hint=None):
+    """Search TMDB and return metadata for a single movie."""
+    if not title_hint:
+        return None, 'Could not infer movie title from filename'
+
+    search_payload, error = tmdb_request('/search/movie', {
+        'query': title_hint,
+        'include_adult': 'false',
+        'language': 'en-US',
+        'page': 1,
+    })
+    if error:
+        return None, error
+
+    results = (search_payload or {}).get('results') or []
+    if not results:
+        return None, 'No TMDB match found for this filename'
+
+    selected = select_tmdb_result(results, year_hint=year_hint)
+    if not selected:
+        return None, 'No TMDB match found for this filename'
+
+    details_payload = None
+    movie_id = selected.get('id')
+    if movie_id:
+        details_payload, details_error = tmdb_request(f'/movie/{movie_id}', {'language': 'en-US'})
+        if details_error:
+            details_payload = None
+
+    return normalize_tmdb_metadata(selected, details_payload), None
+
+
+def build_movie_record(relative_path, file_path, stat_result, cache_entry):
+    """Build API response object for a movie file."""
+    metadata = cache_entry.get('metadata') if isinstance(cache_entry.get('metadata'), dict) else {}
+    guessed_title = cache_entry.get('title_guess') or file_path.stem
+    guessed_year = cache_entry.get('year_guess')
+    rating = metadata.get('rating')
+    if isinstance(rating, (int, float)):
+        rating = round(float(rating), 1)
+    else:
+        rating = None
+
+    runtime = metadata.get('runtime')
+    if not isinstance(runtime, int):
+        runtime = None
+
+    year = metadata.get('year') if isinstance(metadata.get('year'), int) else guessed_year
+
+    return {
+        'filename': relative_path,
+        'display_title': metadata.get('title') or guessed_title,
+        'year': year,
+        'overview': metadata.get('overview') or '',
+        'rating': rating,
+        'genres': metadata.get('genres') if isinstance(metadata.get('genres'), list) else [],
+        'runtime': runtime,
+        'poster_url': metadata.get('poster_url') or '',
+        'backdrop_url': metadata.get('backdrop_url') or '',
+        'tmdb_id': metadata.get('tmdb_id'),
+        'file_size_bytes': int(stat_result.st_size),
+        'file_size_human': format_bytes(stat_result.st_size),
+        'file_path': str(file_path),
+        'format': file_path.suffix.lower().replace('.', '').upper() or 'UNKNOWN',
+        'modified_ts': int(stat_result.st_mtime),
+        'modified_human': datetime.fromtimestamp(stat_result.st_mtime).strftime('%Y-%m-%d %H:%M'),
+        'has_metadata': bool(metadata.get('title')),
+    }
+
+
+def sort_movies(movies, sort_key):
+    """Sort movies by one of name/date/rating."""
+    sort_key = (sort_key or 'date').strip().lower()
+    if sort_key == 'name':
+        return sorted(movies, key=lambda m: (m.get('display_title', '').lower(), m.get('filename', '').lower()))
+    if sort_key == 'rating':
+        return sorted(movies, key=lambda m: (float(m.get('rating') or 0.0), m.get('display_title', '').lower()), reverse=True)
+    return sorted(movies, key=lambda m: (m.get('modified_ts') or 0, m.get('display_title', '').lower()), reverse=True)
+
+
+def load_movies_index():
+    """Scan movie directory and merge with metadata cache."""
+    movies = []
+    changed = False
+    with MOVIE_CACHE_LOCK:
+        cache = load_movie_metadata_cache()
+        cache_movies = cache.get('movies')
+        if not isinstance(cache_movies, dict):
+            cache_movies = {}
+            cache['movies'] = cache_movies
+
+        seen = set()
+
+        if MOVIES_ROOT.exists():
+            for movie_path in MOVIES_ROOT.rglob('*'):
+                if not movie_path.is_file() or not is_video_file(movie_path):
+                    continue
+                try:
+                    stat_result = movie_path.stat()
+                except OSError:
+                    continue
+
+                relative_path = str(movie_path.relative_to(MOVIES_ROOT))
+                seen.add(relative_path)
+                signature = f'{int(stat_result.st_size)}:{int(stat_result.st_mtime)}'
+                title_hint, year_hint = parse_movie_filename(movie_path.name)
+                existing_entry = cache_movies.get(relative_path)
+                if not isinstance(existing_entry, dict):
+                    existing_entry = {}
+                    changed = True
+
+                metadata = existing_entry.get('metadata') if isinstance(existing_entry.get('metadata'), dict) else {}
+                new_entry = {
+                    'signature': signature,
+                    'title_guess': title_hint,
+                    'year_guess': year_hint,
+                    'metadata': metadata,
+                    'tmdb_updated_at': existing_entry.get('tmdb_updated_at') or '',
+                }
+
+                if existing_entry != new_entry:
+                    changed = True
+                    cache_movies[relative_path] = new_entry
+
+                movies.append(build_movie_record(relative_path, movie_path, stat_result, cache_movies[relative_path]))
+
+        stale_paths = [path for path in list(cache_movies.keys()) if path not in seen]
+        if stale_paths:
+            changed = True
+            for stale_path in stale_paths:
+                cache_movies.pop(stale_path, None)
+
+        if changed:
+            cache['updated_at'] = datetime.now().isoformat(timespec='seconds')
+            save_movie_metadata_cache(cache)
+
+    return movies
+
+
+def update_single_movie_cache(relative_path, metadata, title_hint, year_hint, signature):
+    """Persist one movie metadata entry into the cache."""
+    with MOVIE_CACHE_LOCK:
+        cache = load_movie_metadata_cache()
+        cache_movies = cache.get('movies')
+        if not isinstance(cache_movies, dict):
+            cache_movies = {}
+            cache['movies'] = cache_movies
+        cache_movies[relative_path] = {
+            'signature': signature,
+            'title_guess': title_hint,
+            'year_guess': year_hint,
+            'metadata': metadata or {},
+            'tmdb_updated_at': datetime.now().isoformat(timespec='seconds'),
+        }
+        cache['updated_at'] = datetime.now().isoformat(timespec='seconds')
+        save_movie_metadata_cache(cache)
+
+
+def remove_movie_from_cache(relative_path):
+    """Remove one movie entry from the metadata cache."""
+    with MOVIE_CACHE_LOCK:
+        cache = load_movie_metadata_cache()
+        cache_movies = cache.get('movies')
+        if not isinstance(cache_movies, dict):
+            return
+        if relative_path in cache_movies:
+            cache_movies.pop(relative_path, None)
+            cache['updated_at'] = datetime.now().isoformat(timespec='seconds')
+            save_movie_metadata_cache(cache)
+
+
+def transmission_is_installed():
+    """Check whether transmission-daemon package is installed."""
+    _, _, rc = run_cmd('dpkg-query -s transmission-daemon >/dev/null 2>&1', timeout=10)
+    return rc == 0
+
+
+def transmission_rpc_call(method, arguments=None):
+    """Call Transmission RPC with automatic CSRF session-id negotiation."""
+    global TRANSMISSION_SESSION_ID
+    payload = {
+        'method': method,
+        'arguments': arguments or {},
+    }
+    headers = {'Content-Type': 'application/json'}
+
+    with TRANSMISSION_SESSION_LOCK:
+        if TRANSMISSION_SESSION_ID:
+            headers['X-Transmission-Session-Id'] = TRANSMISSION_SESSION_ID
+
+    try:
+        response = http_requests.post(TRANSMISSION_RPC_URL, json=payload, headers=headers, timeout=15)
+    except http_requests.RequestException as exc:
+        return None, f'Cannot reach Transmission RPC: {exc}'
+
+    if response.status_code == 409:
+        session_id = response.headers.get('X-Transmission-Session-Id', '').strip()
+        if not session_id:
+            return None, 'Transmission RPC session negotiation failed'
+        with TRANSMISSION_SESSION_LOCK:
+            TRANSMISSION_SESSION_ID = session_id
+        headers['X-Transmission-Session-Id'] = session_id
+        try:
+            response = http_requests.post(TRANSMISSION_RPC_URL, json=payload, headers=headers, timeout=15)
+        except http_requests.RequestException as exc:
+            return None, f'Cannot reach Transmission RPC: {exc}'
+
+    if response.status_code >= 400:
+        return None, f'Transmission RPC returned HTTP {response.status_code}'
+
+    try:
+        body = response.json()
+    except Exception:
+        return None, 'Transmission RPC returned invalid JSON'
+
+    if body.get('result') != 'success':
+        return None, body.get('result') or 'Transmission RPC call failed'
+
+    return body.get('arguments') or {}, None
+
+
+def format_speed(bytes_per_second):
+    """Format speed in bytes/s."""
+    value = float(bytes_per_second or 0.0)
+    if value < 1024:
+        return f'{value:.0f} B/s'
+    if value < 1024 * 1024:
+        return f'{value / 1024:.1f} KB/s'
+    return f'{value / (1024 * 1024):.2f} MB/s'
+
+
+def format_eta(seconds):
+    """Format Transmission ETA seconds into a readable text."""
+    try:
+        seconds = int(seconds)
+    except Exception:
+        return 'Unknown'
+
+    if seconds == -1:
+        return 'Unknown'
+    if seconds == -2:
+        return 'Done'
+    if seconds < 0:
+        return 'Unknown'
+    if seconds < 60:
+        return f'{seconds}s'
+    minutes, sec = divmod(seconds, 60)
+    if minutes < 60:
+        return f'{minutes}m {sec}s'
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f'{hours}h {minutes}m'
+    days, hours = divmod(hours, 24)
+    return f'{days}d {hours}h'
+
+
+def normalize_torrent(torrent):
+    """Normalize Transmission torrent object for frontend rendering."""
+    progress = round(float(torrent.get('percentDone') or 0.0) * 100, 1)
+    status_code = int(torrent.get('status') or 0)
+    is_finished = bool(torrent.get('isFinished')) or progress >= 100.0
+
+    status_text = TRANSMISSION_STATUS_LABELS.get(status_code, 'Unknown')
+    if is_finished and status_code == 0:
+        status_text = 'Completed'
+
+    added_date = int(torrent.get('addedDate') or 0)
+    return {
+        'id': int(torrent.get('id') or 0),
+        'name': torrent.get('name') or 'Unnamed torrent',
+        'progress': progress,
+        'download_speed': format_speed(torrent.get('rateDownload') or 0),
+        'upload_speed': format_speed(torrent.get('rateUpload') or 0),
+        'eta': format_eta(torrent.get('eta')),
+        'status': status_text,
+        'status_code': status_code,
+        'is_finished': is_finished,
+        'error': torrent.get('errorString') or '',
+        'total_size_bytes': int(torrent.get('totalSize') or 0),
+        'total_size_human': format_bytes(int(torrent.get('totalSize') or 0)),
+        'added_ts': added_date,
+        'added_human': datetime.fromtimestamp(added_date).strftime('%Y-%m-%d %H:%M') if added_date else '',
+    }
+
+
 # --- Auth routes ---
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -1176,6 +1711,365 @@ def api_terminal():
     if stderr:
         output = output + '\n' + stderr if output else stderr
     return jsonify({'output': output or '(no output)', 'returncode': rc})
+
+
+# --- Movies ---
+
+@app.route('/movies')
+@login_required
+def movies():
+    return render_template(
+        'movies.html',
+        movies_root=str(MOVIES_ROOT),
+        tmdb_key_set=bool(load_tmdb_key()),
+        transmission_installed=transmission_is_installed(),
+        transmission_running=check_service('transmission-daemon'),
+    )
+
+
+@app.route('/movies/api/list')
+@login_required
+def movies_api_list():
+    sort_key = request.args.get('sort', 'date')
+    search_query = request.args.get('q', '').strip().lower()
+
+    movies_list = load_movies_index()
+    if search_query:
+        movies_list = [
+            movie for movie in movies_list
+            if search_query in str(movie.get('display_title', '')).lower()
+            or search_query in str(movie.get('filename', '')).lower()
+        ]
+    movies_list = sort_movies(movies_list, sort_key)
+
+    return jsonify({
+        'movies': movies_list,
+        'count': len(movies_list),
+        'tmdb_key_set': bool(load_tmdb_key()),
+        'movies_root': str(MOVIES_ROOT),
+    })
+
+
+@app.route('/movies/api/metadata/<path:filename>')
+@login_required
+def movies_api_metadata(filename):
+    movie_path = resolve_movie_path(filename)
+    if movie_path is None:
+        return jsonify({'error': 'Invalid movie path'}), 403
+    if not movie_path.exists() or not movie_path.is_file():
+        return jsonify({'error': 'Movie file not found'}), 404
+    if not is_video_file(movie_path):
+        return jsonify({'error': 'Not a supported video file'}), 400
+
+    relative_path = str(movie_path.relative_to(MOVIES_ROOT))
+    title_hint, year_hint = parse_movie_filename(movie_path.name)
+    metadata, error = fetch_tmdb_metadata(title_hint, year_hint=year_hint)
+    if error:
+        status_code = 502
+        if 'not configured' in error.lower() or 'invalid' in error.lower():
+            status_code = 400
+        elif 'no tmdb match' in error.lower() or 'could not infer' in error.lower():
+            status_code = 404
+        return jsonify({'error': error}), status_code
+
+    try:
+        stat_result = movie_path.stat()
+    except OSError as exc:
+        return jsonify({'error': str(exc)}), 500
+
+    signature = f'{int(stat_result.st_size)}:{int(stat_result.st_mtime)}'
+    update_single_movie_cache(relative_path, metadata, title_hint, year_hint, signature)
+    cache_entry = {
+        'signature': signature,
+        'title_guess': title_hint,
+        'year_guess': year_hint,
+        'metadata': metadata,
+    }
+
+    return jsonify({
+        'status': 'ok',
+        'movie': build_movie_record(relative_path, movie_path, stat_result, cache_entry),
+    })
+
+
+@app.route('/movies/api/search')
+@login_required
+def movies_api_search():
+    query = request.args.get('q', '').strip()
+    if not query:
+        return jsonify({'results': []})
+
+    if not load_tmdb_key():
+        return jsonify({'error': 'TMDB API key is not configured'}), 400
+
+    payload, error = tmdb_request('/search/movie', {
+        'query': query,
+        'include_adult': 'false',
+        'language': 'en-US',
+        'page': 1,
+    })
+    if error:
+        status_code = 502
+        if 'not configured' in error.lower() or 'invalid' in error.lower():
+            status_code = 400
+        return jsonify({'error': error}), status_code
+
+    results = []
+    for item in (payload or {}).get('results') or []:
+        title = (item.get('title') or '').strip()
+        if not title:
+            continue
+        year = extract_release_year(item.get('release_date'))
+        rating = round(float(item.get('vote_average') or 0.0), 1)
+        torrent_query = f'{title} {year or ""} 1080p torrent magnet'.strip()
+        google_url = 'https://www.google.com/search?q=' + urllib.parse.quote_plus(torrent_query)
+        results.append({
+            'title': title,
+            'year': year,
+            'rating': rating,
+            'poster_url': tmdb_image_url(item.get('poster_path'), TMDB_POSTER_BASE_URL),
+            'overview': (item.get('overview') or '').strip(),
+            'google_url': google_url,
+        })
+        if len(results) >= 20:
+            break
+
+    return jsonify({'results': results})
+
+
+@app.route('/movies/stream/<path:filename>')
+@login_required
+def movies_stream(filename):
+    movie_path = resolve_movie_path(filename)
+    if movie_path is None:
+        abort(403)
+    if not movie_path.exists() or not movie_path.is_file():
+        abort(404)
+    if not is_video_file(movie_path):
+        abort(400)
+    relative_path = str(movie_path.relative_to(MOVIES_ROOT))
+    return send_from_directory(str(MOVIES_ROOT), relative_path, as_attachment=False, conditional=True)
+
+
+@app.route('/movies/delete', methods=['POST'])
+@login_required
+def movies_delete():
+    data = request_payload()
+    filename = str(data.get('filename', '')).strip()
+    movie_path = resolve_movie_path(filename)
+    if movie_path is None:
+        return jsonify({'error': 'Invalid movie path'}), 403
+    if not movie_path.exists() or not movie_path.is_file():
+        return jsonify({'error': 'Movie file not found'}), 404
+    if not is_video_file(movie_path):
+        return jsonify({'error': 'Only supported video files can be deleted here'}), 400
+
+    relative_path = str(movie_path.relative_to(MOVIES_ROOT))
+    try:
+        movie_path.unlink()
+        remove_movie_from_cache(relative_path)
+        return jsonify({'status': 'ok', 'removed': relative_path})
+    except Exception as exc:
+        return jsonify({'error': str(exc)}), 500
+
+
+@app.route('/movies/settings', methods=['POST'])
+@login_required
+def movies_settings():
+    data = request_payload()
+    tmdb_key = str(data.get('tmdb_key', '')).strip()
+    ok, message = save_tmdb_key(tmdb_key)
+    if not ok:
+        return jsonify({'error': message}), 500
+    return jsonify({
+        'status': 'ok',
+        'message': message,
+        'tmdb_key_set': bool(load_tmdb_key()),
+    })
+
+
+@app.route('/movies/torrent/list')
+@login_required
+def movies_torrent_list():
+    installed = transmission_is_installed()
+    running = check_service('transmission-daemon') if installed else False
+
+    if not installed:
+        return jsonify({
+            'installed': False,
+            'running': False,
+            'torrents': [],
+            'message': 'transmission-daemon is not installed',
+        })
+
+    if not running:
+        return jsonify({
+            'installed': True,
+            'running': False,
+            'torrents': [],
+            'message': 'transmission-daemon is installed but not running',
+        })
+
+    fields = [
+        'id', 'name', 'status', 'percentDone', 'rateDownload', 'rateUpload',
+        'eta', 'isFinished', 'totalSize', 'addedDate', 'errorString',
+    ]
+    payload, error = transmission_rpc_call('torrent-get', {'fields': fields})
+    if error:
+        return jsonify({
+            'installed': True,
+            'running': True,
+            'torrents': [],
+            'error': error,
+        }), 502
+
+    torrents = [normalize_torrent(item) for item in (payload or {}).get('torrents') or []]
+    torrents.sort(key=lambda t: (t['is_finished'], t['status'] == 'Paused', -t['added_ts']))
+    return jsonify({
+        'installed': True,
+        'running': True,
+        'torrents': torrents,
+        'count': len(torrents),
+    })
+
+
+@app.route('/movies/torrent/add', methods=['POST'])
+@login_required
+def movies_torrent_add():
+    if not transmission_is_installed():
+        return jsonify({'error': 'transmission-daemon is not installed'}), 400
+    if not check_service('transmission-daemon'):
+        return jsonify({'error': 'transmission-daemon is not running'}), 400
+
+    data = request_payload()
+    magnet = str(data.get('magnet', '')).strip()
+    torrent_file = request.files.get('torrent_file')
+
+    if not magnet and (not torrent_file or torrent_file.filename == ''):
+        return jsonify({'error': 'Provide a magnet link or upload a .torrent file'}), 400
+
+    if magnet:
+        arguments = {'filename': magnet, 'download-dir': str(MOVIES_ROOT)}
+    else:
+        if not torrent_file.filename.lower().endswith('.torrent'):
+            return jsonify({'error': 'Only .torrent files are accepted'}), 400
+        try:
+            torrent_bytes = torrent_file.read()
+        except Exception as exc:
+            return jsonify({'error': str(exc)}), 400
+        if not torrent_bytes:
+            return jsonify({'error': 'Uploaded .torrent file is empty'}), 400
+        arguments = {
+            'metainfo': base64.b64encode(torrent_bytes).decode('ascii'),
+            'download-dir': str(MOVIES_ROOT),
+        }
+
+    payload, error = transmission_rpc_call('torrent-add', arguments)
+    if error:
+        return jsonify({'error': error}), 502
+
+    added = payload.get('torrent-added')
+    duplicate = payload.get('torrent-duplicate')
+    if added:
+        return jsonify({'status': 'ok', 'message': f'Added: {added.get("name", "torrent")}'})
+    if duplicate:
+        return jsonify({'status': 'ok', 'message': f'Already added: {duplicate.get("name", "torrent")}'})
+    return jsonify({'status': 'ok', 'message': 'Torrent submitted'})
+
+
+@app.route('/movies/torrent/action', methods=['POST'])
+@login_required
+def movies_torrent_action():
+    data = request_payload()
+    action = str(data.get('action', '')).strip().lower()
+    if not action:
+        return jsonify({'error': 'Action is required'}), 400
+
+    service_actions = {
+        'start-service': 'start',
+        'stop-service': 'stop',
+        'restart-service': 'restart',
+    }
+
+    if action in service_actions:
+        stdout, stderr, rc = run_cmd(
+            f'sudo systemctl {service_actions[action]} transmission-daemon',
+            timeout=30
+        )
+        if rc != 0:
+            return jsonify({'error': stderr or stdout or 'Service command failed'}), 500
+        return jsonify({'status': 'ok', 'message': stdout or f'Service action: {action}'})
+
+    if action == 'install-service':
+        install_steps = [
+            ('Install package', 'sudo DEBIAN_FRONTEND=noninteractive apt-get install -y transmission-daemon', 300, True),
+            ('Stop service', 'sudo systemctl stop transmission-daemon', 30, True),
+            ('Create movie folder', f'sudo mkdir -p {shlex.quote(str(MOVIES_ROOT))}', 15, True),
+            (
+                'Configure Transmission',
+                "sudo python3 -c 'import json; p=\"/etc/transmission-daemon/settings.json\"; "
+                "s=json.load(open(p, \"r\")); "
+                "s[\"download-dir\"]=\"/home/ludovic/movies\"; "
+                "s[\"rpc-authentication-required\"]=False; "
+                "s[\"rpc-whitelist-enabled\"]=False; "
+                "s[\"incomplete-dir-enabled\"]=False; "
+                "s[\"rpc-host-whitelist-enabled\"]=False; "
+                "json.dump(s, open(p, \"w\"), indent=4)'",
+                30,
+                True,
+            ),
+            ('Set group membership', 'sudo usermod -aG debian-transmission ludovic', 15, True),
+            ('Set ownership', 'sudo chown -R debian-transmission:ludovic /home/ludovic/movies', 30, True),
+            ('Set permissions', 'sudo chmod 775 /home/ludovic/movies', 15, True),
+            ('Enable service', 'sudo systemctl enable transmission-daemon', 20, False),
+            ('Start service', 'sudo systemctl start transmission-daemon', 20, True),
+        ]
+        output_lines = []
+        for label, command, timeout, required in install_steps:
+            stdout, stderr, rc = run_cmd(command, timeout=timeout)
+            if rc != 0:
+                if required:
+                    return jsonify({
+                        'error': f'{label} failed: {stderr or stdout or "command failed"}',
+                        'output': '\n'.join(output_lines),
+                    }), 500
+                output_lines.append(f'[{label}] skipped: {stderr or stdout or "not permitted"}')
+                continue
+            if stdout:
+                output_lines.append(f'[{label}] {stdout}')
+
+        return jsonify({
+            'status': 'ok',
+            'message': 'Transmission installed and started successfully',
+            'output': '\n'.join(output_lines),
+        })
+
+    if not transmission_is_installed():
+        return jsonify({'error': 'transmission-daemon is not installed'}), 400
+    if not check_service('transmission-daemon'):
+        return jsonify({'error': 'transmission-daemon is not running'}), 400
+
+    torrent_id_raw = str(data.get('id', '')).strip()
+    if not torrent_id_raw.isdigit():
+        return jsonify({'error': 'Invalid torrent id'}), 400
+    torrent_id = int(torrent_id_raw)
+
+    if action == 'pause':
+        payload, error = transmission_rpc_call('torrent-stop', {'ids': [torrent_id]})
+    elif action == 'resume':
+        payload, error = transmission_rpc_call('torrent-start', {'ids': [torrent_id]})
+    elif action == 'remove':
+        delete_data = bool(data.get('delete_data'))
+        payload, error = transmission_rpc_call('torrent-remove', {
+            'ids': [torrent_id],
+            'delete-local-data': delete_data,
+        })
+    else:
+        return jsonify({'error': 'Invalid action'}), 400
+
+    if error:
+        return jsonify({'error': error}), 502
+    return jsonify({'status': 'ok', 'result': payload or {}})
 
 
 # --- AI Assistant ---

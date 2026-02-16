@@ -1,0 +1,1320 @@
+{% extends "base.html" %}
+{% block title %}Movies - Mini Control{% endblock %}
+{% block page_title %}Movies{% endblock %}
+{% block page_subtitle %}Browse your local movie collection, enrich metadata via TMDB, and control Transmission downloads{% endblock %}
+
+{% block content %}
+<style>
+.movies-page {
+    --m-bg: #1a1a2e;
+    --m-surface: #16213e;
+    --m-surface-soft: #1c2c4f;
+    --m-border: rgba(78, 204, 163, 0.24);
+    --m-accent: #4ecca3;
+    --m-danger: #e94560;
+    --m-blue: #2b7fcf;
+    --m-text: #f8faff;
+    --m-text-muted: #b7c2db;
+    color: var(--m-text);
+}
+
+.movies-panel {
+    background: linear-gradient(165deg, rgba(22, 33, 62, 0.92), rgba(15, 52, 96, 0.88));
+    border: 1px solid var(--m-border);
+    border-radius: 16px;
+    box-shadow: 0 18px 34px rgba(8, 10, 20, 0.42);
+    padding: 1rem;
+}
+
+.movies-hero {
+    padding: 1.3rem;
+    background:
+        linear-gradient(125deg, rgba(26, 26, 46, 0.95) 0%, rgba(15, 52, 96, 0.9) 62%, rgba(78, 204, 163, 0.22) 100%),
+        radial-gradient(circle at 12% 20%, rgba(78, 204, 163, 0.22), transparent 45%),
+        radial-gradient(circle at 85% 78%, rgba(233, 69, 96, 0.15), transparent 45%);
+}
+
+.movies-hero-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+}
+
+.movies-hero h2 {
+    font-size: clamp(1.2rem, 2.2vw, 1.6rem);
+    margin-bottom: 0.2rem;
+}
+
+.movies-hero p {
+    color: var(--m-text-muted);
+    font-size: 0.95rem;
+}
+
+.movies-actions {
+    display: flex;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+}
+
+.movies-btn {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 0.5rem 0.85rem;
+    font-weight: 600;
+    font-size: 0.82rem;
+    color: #fff;
+    cursor: pointer;
+    transition: transform 0.16s ease, opacity 0.16s ease, box-shadow 0.16s ease;
+}
+
+.movies-btn:hover {
+    transform: translateY(-1px);
+}
+
+.movies-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.movies-btn-primary {
+    background: var(--m-accent);
+    color: #0f1f31;
+}
+
+.movies-btn-muted {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.18);
+}
+
+.movies-btn-danger {
+    background: var(--m-danger);
+}
+
+.movies-btn-blue {
+    background: var(--m-blue);
+}
+
+.movies-search-form {
+    margin-top: 1rem;
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) auto;
+    gap: 0.6rem;
+}
+
+.movies-input,
+.movies-select {
+    border: 1px solid rgba(183, 194, 219, 0.3);
+    border-radius: 10px;
+    background: rgba(14, 21, 45, 0.72);
+    color: var(--m-text);
+    padding: 0.58rem 0.72rem;
+    font-size: 0.88rem;
+}
+
+.movies-input::placeholder {
+    color: rgba(183, 194, 219, 0.72);
+}
+
+.movies-status {
+    margin-top: 0.72rem;
+    color: var(--m-text-muted);
+    font-size: 0.86rem;
+    min-height: 1.25rem;
+}
+
+.movies-status.error {
+    color: #ffc1cc;
+}
+
+.search-results-row {
+    margin-top: 0.95rem;
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 180px;
+    gap: 0.75rem;
+    overflow-x: auto;
+    padding-bottom: 0.35rem;
+}
+
+.search-card {
+    background: rgba(13, 20, 43, 0.78);
+    border: 1px solid rgba(78, 204, 163, 0.24);
+    border-radius: 12px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.search-card-poster {
+    height: 250px;
+    background: linear-gradient(150deg, #0f3460, #1a1a2e);
+    background-size: cover;
+    background-position: center;
+}
+
+.search-card-body {
+    padding: 0.6rem;
+}
+
+.search-card-title {
+    font-size: 0.88rem;
+    font-weight: 700;
+    line-height: 1.3;
+    margin-bottom: 0.18rem;
+}
+
+.search-card-meta {
+    font-size: 0.77rem;
+    color: var(--m-text-muted);
+    margin-bottom: 0.45rem;
+}
+
+.search-card a {
+    display: inline-block;
+    width: 100%;
+    text-align: center;
+    text-decoration: none;
+}
+
+.movies-alert {
+    margin-top: 1rem;
+    padding: 0.72rem 0.9rem;
+    border-radius: 12px;
+    border: 1px solid rgba(233, 69, 96, 0.38);
+    background: rgba(233, 69, 96, 0.15);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.movies-alert strong {
+    display: block;
+    margin-bottom: 0.15rem;
+}
+
+.movies-alert span {
+    color: var(--m-text-muted);
+    font-size: 0.86rem;
+}
+
+.movies-library {
+    margin-top: 1rem;
+}
+
+.library-toolbar {
+    display: grid;
+    grid-template-columns: minmax(160px, 1fr) 140px auto auto;
+    gap: 0.6rem;
+    align-items: center;
+}
+
+.movie-count {
+    justify-self: end;
+    color: var(--m-text-muted);
+    font-size: 0.84rem;
+}
+
+.movies-grid {
+    margin-top: 0.9rem;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.85rem;
+}
+
+.movie-card {
+    position: relative;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 13px;
+    overflow: hidden;
+    padding: 0;
+    cursor: pointer;
+    background: linear-gradient(160deg, #1c2c4f, #11172a);
+    aspect-ratio: 2 / 3;
+    text-align: left;
+    color: #fff;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.movie-card:hover {
+    transform: scale(1.03);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.42);
+}
+
+.movie-card-image {
+    position: absolute;
+    inset: 0;
+    background-position: center;
+    background-size: cover;
+    opacity: 0.95;
+}
+
+.movie-card-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(10, 11, 18, 0.05), rgba(9, 11, 22, 0.9) 72%);
+    display: flex;
+    align-items: flex-end;
+    padding: 0.62rem;
+}
+
+.movie-card-title {
+    font-size: 0.84rem;
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+.movie-card-year {
+    color: var(--m-text-muted);
+    font-size: 0.74rem;
+}
+
+.movie-rating-badge {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.52rem;
+    background: rgba(10, 15, 26, 0.86);
+    border: 1px solid rgba(78, 204, 163, 0.8);
+    color: var(--m-accent);
+    border-radius: 999px;
+    padding: 0.2rem 0.48rem;
+    font-size: 0.74rem;
+    font-weight: 700;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.movie-card:hover .movie-rating-badge {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.movies-empty {
+    margin-top: 1rem;
+    text-align: center;
+    border: 1px dashed rgba(183, 194, 219, 0.35);
+    border-radius: 13px;
+    padding: 1.4rem 0.8rem;
+    color: var(--m-text-muted);
+    background: rgba(17, 23, 41, 0.64);
+}
+
+.downloads {
+    margin-top: 1rem;
+}
+
+.downloads-toggle {
+    width: 100%;
+    text-align: left;
+    background: rgba(15, 25, 45, 0.7);
+    border: 1px solid var(--m-border);
+    color: #fff;
+    border-radius: 12px;
+    padding: 0.72rem 0.9rem;
+    font-size: 0.98rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.downloads-content {
+    margin-top: 0.6rem;
+    display: block;
+}
+
+.downloads-content.collapsed {
+    display: none;
+}
+
+.downloads-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+}
+
+.downloads-meta {
+    color: var(--m-text-muted);
+    font-size: 0.84rem;
+}
+
+.torrent-form {
+    margin-top: 0.8rem;
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) auto auto;
+    gap: 0.56rem;
+    align-items: center;
+}
+
+.torrent-table-wrap {
+    margin-top: 0.8rem;
+    overflow-x: auto;
+}
+
+.torrent-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 850px;
+    font-size: 0.82rem;
+}
+
+.torrent-table th,
+.torrent-table td {
+    border-bottom: 1px solid rgba(183, 194, 219, 0.2);
+    padding: 0.5rem 0.44rem;
+    text-align: left;
+    vertical-align: middle;
+}
+
+.torrent-progress {
+    width: 100%;
+    min-width: 120px;
+}
+
+.torrent-progress-track {
+    height: 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.12);
+    overflow: hidden;
+}
+
+.torrent-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4ecca3, #2ca482);
+    transition: width 0.35s ease;
+}
+
+.torrent-status-pill {
+    display: inline-block;
+    padding: 0.14rem 0.46rem;
+    border-radius: 999px;
+    background: rgba(78, 204, 163, 0.15);
+    border: 1px solid rgba(78, 204, 163, 0.5);
+    color: var(--m-accent);
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.torrent-status-pill.completed {
+    color: #a6f8de;
+    border-color: rgba(166, 248, 222, 0.8);
+}
+
+.movie-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(4, 7, 14, 0.82);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    z-index: 999;
+}
+
+.movie-modal.open {
+    display: flex;
+}
+
+.movie-modal-dialog {
+    width: min(980px, 100%);
+    max-height: calc(100vh - 2rem);
+    overflow: auto;
+    background: linear-gradient(170deg, rgba(22, 33, 62, 0.98), rgba(16, 24, 46, 0.98));
+    border-radius: 16px;
+    border: 1px solid rgba(78, 204, 163, 0.3);
+    box-shadow: 0 22px 46px rgba(0, 0, 0, 0.55);
+    position: relative;
+}
+
+.modal-close {
+    position: absolute;
+    top: 0.65rem;
+    right: 0.65rem;
+    z-index: 3;
+}
+
+.movie-modal-backdrop {
+    height: 220px;
+    background:
+        linear-gradient(180deg, rgba(14, 18, 30, 0.25), rgba(14, 18, 30, 0.92)),
+        radial-gradient(circle at 18% 20%, rgba(78, 204, 163, 0.32), transparent 48%),
+        linear-gradient(130deg, #0f3460, #1a1a2e);
+    background-size: cover;
+    background-position: center;
+    filter: saturate(0.96) contrast(1.02);
+}
+
+.movie-modal-body {
+    margin-top: -76px;
+    position: relative;
+    z-index: 2;
+    padding: 0 1rem 1rem;
+    display: grid;
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 1rem;
+}
+
+.movie-modal-poster {
+    width: 100%;
+    border-radius: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.26);
+    background: linear-gradient(150deg, #1a1a2e, #0f3460);
+    min-height: 290px;
+    object-fit: cover;
+}
+
+.movie-modal-info h3 {
+    font-size: clamp(1.18rem, 2.2vw, 1.7rem);
+    margin-bottom: 0.35rem;
+}
+
+.movie-meta-row {
+    display: flex;
+    gap: 0.7rem;
+    flex-wrap: wrap;
+    color: var(--m-text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 0.6rem;
+}
+
+.genre-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.7rem;
+}
+
+.genre-pill {
+    background: rgba(43, 127, 207, 0.2);
+    border: 1px solid rgba(43, 127, 207, 0.55);
+    border-radius: 999px;
+    padding: 0.15rem 0.48rem;
+    font-size: 0.75rem;
+}
+
+.movie-overview {
+    color: #e7ecfb;
+    font-size: 0.9rem;
+    line-height: 1.5;
+    margin-bottom: 0.8rem;
+    white-space: pre-wrap;
+}
+
+.movie-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.8rem;
+}
+
+.file-info {
+    background: rgba(10, 15, 29, 0.52);
+    border: 1px solid rgba(183, 194, 219, 0.2);
+    border-radius: 12px;
+    padding: 0.7rem;
+    font-size: 0.82rem;
+    color: var(--m-text-muted);
+}
+
+.file-info strong {
+    color: #fff;
+}
+
+.tmdb-modal-body {
+    padding: 1rem;
+}
+
+.tmdb-modal-body p {
+    color: var(--m-text-muted);
+    font-size: 0.87rem;
+    margin-bottom: 0.7rem;
+}
+
+.tmdb-form {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.56rem;
+}
+
+.tmdb-hint {
+    margin-top: 0.56rem;
+    color: var(--m-text-muted);
+    font-size: 0.78rem;
+}
+
+@media (max-width: 1350px) {
+    .movies-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 1080px) {
+    .movies-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .library-toolbar {
+        grid-template-columns: minmax(140px, 1fr) 130px auto;
+    }
+    .movie-count {
+        justify-self: start;
+    }
+}
+
+@media (max-width: 760px) {
+    .movies-search-form,
+    .torrent-form {
+        grid-template-columns: 1fr;
+    }
+    .movie-modal-body {
+        grid-template-columns: 1fr;
+        margin-top: -44px;
+    }
+    .movie-modal-poster {
+        max-width: 210px;
+    }
+}
+
+@media (max-width: 640px) {
+    .movies-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .library-toolbar {
+        grid-template-columns: 1fr;
+    }
+}
+</style>
+
+<div class="movies-page">
+    <section class="movies-panel movies-hero">
+        <div class="movies-hero-head">
+            <div>
+                <h2>Search movies to download</h2>
+                <p>Search TMDB, then use the quick "Find Torrent" link to open a legal search in a new tab.</p>
+            </div>
+            <div class="movies-actions">
+                <button type="button" class="movies-btn movies-btn-muted" id="open-tmdb-settings-btn">&#9881; TMDB Key</button>
+                <button type="button" class="movies-btn movies-btn-primary" id="refresh-all-btn">Refresh Library</button>
+            </div>
+        </div>
+        <form id="tmdb-search-form" class="movies-search-form">
+            <input type="text" id="tmdb-search-input" class="movies-input" placeholder="Search title, e.g. Interstellar" autocomplete="off">
+            <button type="submit" class="movies-btn movies-btn-primary">Search</button>
+        </form>
+        <div id="tmdb-search-status" class="movies-status"></div>
+        <div id="tmdb-search-results" class="search-results-row"></div>
+    </section>
+
+    <div id="tmdb-key-banner" class="movies-alert" style="display:none;">
+        <div>
+            <strong>TMDB key missing</strong>
+            <span>Add your TMDB API key to unlock posters, ratings, metadata, and remote movie search.</span>
+        </div>
+        <button type="button" class="movies-btn movies-btn-primary" id="banner-open-settings-btn">Set TMDB Key</button>
+    </div>
+
+    <section class="movies-panel movies-library">
+        <div class="library-toolbar">
+            <input type="text" id="movie-filter-input" class="movies-input" placeholder="Filter local movies by title or filename">
+            <select id="movie-sort-select" class="movies-select">
+                <option value="date">Sort: Date Added</option>
+                <option value="name">Sort: Name</option>
+                <option value="rating">Sort: Rating</option>
+            </select>
+            <button type="button" class="movies-btn movies-btn-muted" id="refresh-movies-btn">Rescan Movies</button>
+            <div class="movie-count" id="movie-count">0 movies</div>
+        </div>
+
+        <div id="movies-grid" class="movies-grid"></div>
+        <div id="movies-empty" class="movies-empty" style="display:none;">
+            No movies yet. Add some via torrent or drop files in <strong>/home/ludovic/movies</strong>.
+        </div>
+    </section>
+
+    <section class="movies-panel downloads">
+        <button type="button" id="downloads-toggle" class="downloads-toggle">Downloads</button>
+        <div id="downloads-content" class="downloads-content">
+            <div class="downloads-header">
+                <div>
+                    <strong>Transmission Torrent Downloads</strong>
+                    <div class="downloads-meta" id="torrent-service-state">Checking Transmission service...</div>
+                </div>
+                <div class="movies-actions" id="torrent-service-actions"></div>
+            </div>
+
+            <form id="torrent-add-form" class="torrent-form" enctype="multipart/form-data">
+                <input type="text" id="magnet-input" class="movies-input" placeholder="Paste magnet link (magnet:?... )">
+                <input type="file" id="torrent-file-input" class="movies-input" accept=".torrent">
+                <button type="submit" class="movies-btn movies-btn-primary">Add Torrent</button>
+            </form>
+            <div id="torrent-status" class="movies-status"></div>
+
+            <div class="torrent-table-wrap">
+                <table class="torrent-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Progress</th>
+                            <th>Down</th>
+                            <th>Up</th>
+                            <th>ETA</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="torrent-table-body">
+                        <tr><td colspan="7">No torrents loaded.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+</div>
+
+<div id="movie-modal" class="movie-modal" role="dialog" aria-modal="true" aria-label="Movie details">
+    <div class="movie-modal-dialog">
+        <button type="button" class="movies-btn movies-btn-muted modal-close" id="movie-modal-close">&times;</button>
+        <div id="movie-modal-backdrop" class="movie-modal-backdrop"></div>
+        <div class="movie-modal-body">
+            <img id="movie-modal-poster" class="movie-modal-poster" alt="Movie poster">
+            <div class="movie-modal-info">
+                <h3 id="movie-modal-title">Movie title</h3>
+                <div class="movie-meta-row" id="movie-meta-row"></div>
+                <div class="genre-pills" id="movie-genre-pills"></div>
+                <p id="movie-overview" class="movie-overview"></p>
+                <div class="movie-actions">
+                    <button type="button" class="movies-btn movies-btn-primary" id="movie-play-btn">Play</button>
+                    <button type="button" class="movies-btn movies-btn-blue" id="movie-open-file-btn">Open File</button>
+                    <button type="button" class="movies-btn movies-btn-danger" id="movie-delete-btn">Delete</button>
+                </div>
+                <div class="file-info" id="movie-file-info"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="tmdb-modal" class="movie-modal" role="dialog" aria-modal="true" aria-label="TMDB settings">
+    <div class="movie-modal-dialog" style="max-width:640px;">
+        <button type="button" class="movies-btn movies-btn-muted modal-close" id="tmdb-modal-close">&times;</button>
+        <div class="tmdb-modal-body">
+            <h3>TMDB API Key Settings</h3>
+            <p>The key is saved to <code>~/.mini-control-tmdb-key</code> on the server.</p>
+            <form id="tmdb-form" class="tmdb-form">
+                <input type="password" id="tmdb-key-input" class="movies-input" placeholder="Paste TMDB API key">
+                <button type="submit" class="movies-btn movies-btn-primary">Save Key</button>
+            </form>
+            <div class="movies-actions" style="margin-top:0.6rem;">
+                <button type="button" class="movies-btn movies-btn-muted" id="tmdb-clear-btn">Clear Key</button>
+            </div>
+            <div id="tmdb-settings-status" class="movies-status"></div>
+            <p class="tmdb-hint">Get a key from TMDB account settings. Metadata is cached in <code>/home/ludovic/movies/.metadata_cache.json</code>.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var MOVIES_ROOT = {{ movies_root|tojson }};
+var tmdbKeySet = {{ tmdb_key_set|tojson }};
+var transmissionInstalled = {{ transmission_installed|tojson }};
+var transmissionRunning = {{ transmission_running|tojson }};
+var movies = [];
+var selectedMovie = null;
+var torrentRefreshTimer = null;
+var metadataHydrateRunning = false;
+
+function apiJson(url, options) {
+    return fetch(url, options || {}).then(function(response) {
+        return response.json().catch(function() { return {}; }).then(function(payload) {
+            if (!response.ok) {
+                throw new Error(payload.error || payload.message || ('Request failed (' + response.status + ')'));
+            }
+            return payload;
+        });
+    });
+}
+
+function encodePath(path) {
+    return String(path || '').split('/').map(function(part) {
+        return encodeURIComponent(part);
+    }).join('/');
+}
+
+function setStatus(elementId, message, isError) {
+    var el = document.getElementById(elementId);
+    if (!el) return;
+    el.textContent = message || '';
+    el.classList.toggle('error', !!isError);
+}
+
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function updateTmdbBanner() {
+    var banner = document.getElementById('tmdb-key-banner');
+    banner.style.display = tmdbKeySet ? 'none' : 'flex';
+}
+
+function sortAndFilterMovies() {
+    var query = document.getElementById('movie-filter-input').value.trim().toLowerCase();
+    var sort = document.getElementById('movie-sort-select').value;
+    var list = movies.slice();
+
+    if (query) {
+        list = list.filter(function(movie) {
+            return String(movie.display_title || '').toLowerCase().indexOf(query) !== -1
+                || String(movie.filename || '').toLowerCase().indexOf(query) !== -1;
+        });
+    }
+
+    if (sort === 'name') {
+        list.sort(function(a, b) {
+            return String(a.display_title || '').localeCompare(String(b.display_title || ''));
+        });
+    } else if (sort === 'rating') {
+        list.sort(function(a, b) {
+            return (Number(b.rating) || 0) - (Number(a.rating) || 0);
+        });
+    } else {
+        list.sort(function(a, b) {
+            return (Number(b.modified_ts) || 0) - (Number(a.modified_ts) || 0);
+        });
+    }
+
+    return list;
+}
+
+function renderMovies() {
+    var grid = document.getElementById('movies-grid');
+    var empty = document.getElementById('movies-empty');
+    var count = document.getElementById('movie-count');
+    var list = sortAndFilterMovies();
+
+    count.textContent = list.length + (list.length === 1 ? ' movie' : ' movies');
+    grid.innerHTML = '';
+
+    if (!list.length) {
+        empty.style.display = 'block';
+        return;
+    }
+    empty.style.display = 'none';
+
+    list.forEach(function(movie) {
+        var card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'movie-card';
+
+        var image = document.createElement('div');
+        image.className = 'movie-card-image';
+        if (movie.poster_url) {
+            image.style.backgroundImage = 'url("' + movie.poster_url + '")';
+        } else if (movie.backdrop_url) {
+            image.style.backgroundImage = 'url("' + movie.backdrop_url + '")';
+        } else {
+            image.style.backgroundImage = 'linear-gradient(140deg, #0f3460, #1a1a2e)';
+        }
+
+        var overlay = document.createElement('div');
+        overlay.className = 'movie-card-overlay';
+
+        var textWrap = document.createElement('div');
+        var title = document.createElement('div');
+        title.className = 'movie-card-title';
+        title.textContent = movie.display_title || movie.filename || 'Unknown';
+        var year = document.createElement('div');
+        year.className = 'movie-card-year';
+        year.textContent = movie.year ? String(movie.year) : 'Year unknown';
+        textWrap.appendChild(title);
+        textWrap.appendChild(year);
+        overlay.appendChild(textWrap);
+
+        var rating = document.createElement('div');
+        rating.className = 'movie-rating-badge';
+        rating.textContent = movie.rating ? ('\u2605 ' + Number(movie.rating).toFixed(1)) : 'No rating';
+
+        card.appendChild(image);
+        card.appendChild(overlay);
+        card.appendChild(rating);
+        card.addEventListener('click', function() {
+            openMovieModal(movie);
+        });
+        grid.appendChild(card);
+    });
+}
+
+function replaceMovie(updatedMovie) {
+    var idx = movies.findIndex(function(movie) {
+        return movie.filename === updatedMovie.filename;
+    });
+    if (idx >= 0) {
+        movies[idx] = updatedMovie;
+    } else {
+        movies.push(updatedMovie);
+    }
+}
+
+function hydrateMissingMetadata() {
+    if (!tmdbKeySet || metadataHydrateRunning) return;
+    var queue = movies.filter(function(movie) { return !movie.has_metadata; });
+    if (!queue.length) return;
+
+    metadataHydrateRunning = true;
+    var index = 0;
+
+    function next() {
+        if (index >= queue.length) {
+            metadataHydrateRunning = false;
+            renderMovies();
+            return;
+        }
+        var item = queue[index++];
+        apiJson('/movies/api/metadata/' + encodePath(item.filename), { cache: 'no-store' })
+            .then(function(payload) {
+                if (payload.movie) {
+                    replaceMovie(payload.movie);
+                    renderMovies();
+                }
+            })
+            .catch(function() {})
+            .finally(function() {
+                window.setTimeout(next, 220);
+            });
+    }
+
+    next();
+}
+
+function loadMovies() {
+    var sort = document.getElementById('movie-sort-select').value;
+    setStatus('tmdb-search-status', 'Scanning /home/ludovic/movies...');
+    return apiJson('/movies/api/list?sort=' + encodeURIComponent(sort), { cache: 'no-store' })
+        .then(function(payload) {
+            movies = payload.movies || [];
+            tmdbKeySet = !!payload.tmdb_key_set;
+            updateTmdbBanner();
+            renderMovies();
+            hydrateMissingMetadata();
+            setStatus('tmdb-search-status', '');
+        })
+        .catch(function(err) {
+            setStatus('tmdb-search-status', err.message, true);
+        });
+}
+
+function openMovieModal(movie) {
+    selectedMovie = movie;
+    document.getElementById('movie-modal-title').textContent = movie.display_title || movie.filename;
+
+    var backdrop = document.getElementById('movie-modal-backdrop');
+    if (movie.backdrop_url) {
+        backdrop.style.backgroundImage = 'linear-gradient(180deg, rgba(14, 18, 30, 0.25), rgba(14, 18, 30, 0.92)), url("' + movie.backdrop_url + '")';
+    } else {
+        backdrop.style.backgroundImage = 'linear-gradient(130deg, #0f3460, #1a1a2e)';
+    }
+
+    var poster = document.getElementById('movie-modal-poster');
+    poster.src = movie.poster_url || '';
+    poster.style.display = movie.poster_url ? 'block' : 'none';
+    poster.alt = (movie.display_title || 'Movie') + ' poster';
+
+    var meta = [];
+    meta.push(movie.year ? String(movie.year) : 'Year unknown');
+    if (movie.rating) meta.push('\u2605 ' + Number(movie.rating).toFixed(1));
+    if (movie.runtime) meta.push(movie.runtime + ' min');
+    document.getElementById('movie-meta-row').textContent = meta.join(' \u2022 ');
+
+    var genreWrap = document.getElementById('movie-genre-pills');
+    genreWrap.innerHTML = '';
+    (movie.genres || []).forEach(function(genre) {
+        var pill = document.createElement('span');
+        pill.className = 'genre-pill';
+        pill.textContent = genre;
+        genreWrap.appendChild(pill);
+    });
+
+    document.getElementById('movie-overview').textContent = movie.overview || 'No description available.';
+
+    document.getElementById('movie-file-info').innerHTML =
+        '<div><strong>Size:</strong> ' + escapeHtml(movie.file_size_human || 'Unknown') + '</div>' +
+        '<div><strong>Format:</strong> ' + escapeHtml(movie.format || 'Unknown') + '</div>' +
+        '<div><strong>Path:</strong> ' + escapeHtml(movie.file_path || ('/home/ludovic/movies/' + movie.filename)) + '</div>' +
+        '<div><strong>Added:</strong> ' + escapeHtml(movie.modified_human || 'Unknown') + '</div>';
+
+    document.getElementById('movie-modal').classList.add('open');
+}
+
+function closeMovieModal() {
+    document.getElementById('movie-modal').classList.remove('open');
+    selectedMovie = null;
+}
+
+function deleteSelectedMovie() {
+    if (!selectedMovie) return;
+    var label = selectedMovie.display_title || selectedMovie.filename;
+    if (!confirm('Delete "' + label + '"? This cannot be undone.')) return;
+
+    apiJson('/movies/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: selectedMovie.filename })
+    })
+    .then(function() {
+        movies = movies.filter(function(movie) { return movie.filename !== selectedMovie.filename; });
+        closeMovieModal();
+        renderMovies();
+        setStatus('tmdb-search-status', 'Deleted ' + label);
+    })
+    .catch(function(err) {
+        alert('Delete failed: ' + err.message);
+    });
+}
+
+function playSelectedMovie() {
+    if (!selectedMovie) return;
+    window.open('/movies/stream/' + encodePath(selectedMovie.filename), '_blank');
+}
+
+function openSelectedMovieFile() {
+    if (!selectedMovie) return;
+    var filesPath = 'movies/' + selectedMovie.filename;
+    window.open('/files/download/' + encodePath(filesPath), '_blank');
+}
+
+function renderTmdbSearchResults(results) {
+    var container = document.getElementById('tmdb-search-results');
+    container.innerHTML = '';
+    if (!results.length) {
+        setStatus('tmdb-search-status', 'No movie results.');
+        return;
+    }
+    setStatus('tmdb-search-status', results.length + ' result(s) loaded.');
+
+    results.forEach(function(item) {
+        var card = document.createElement('div');
+        card.className = 'search-card';
+
+        var poster = document.createElement('div');
+        poster.className = 'search-card-poster';
+        if (item.poster_url) {
+            poster.style.backgroundImage = 'url("' + item.poster_url + '")';
+        }
+
+        var body = document.createElement('div');
+        body.className = 'search-card-body';
+        body.innerHTML =
+            '<div class="search-card-title">' + escapeHtml(item.title || 'Unknown title') + '</div>' +
+            '<div class="search-card-meta">' + escapeHtml(item.year || 'Year ?') + ' \u2022 \u2605 ' + Number(item.rating || 0).toFixed(1) + '</div>';
+
+        var link = document.createElement('a');
+        link.href = item.google_url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.className = 'movies-btn movies-btn-primary';
+        link.textContent = 'Find Torrent';
+        body.appendChild(link);
+
+        card.appendChild(poster);
+        card.appendChild(body);
+        container.appendChild(card);
+    });
+}
+
+function searchTmdb(query) {
+    if (!tmdbKeySet) {
+        setStatus('tmdb-search-status', 'TMDB key is not set. Open settings first.', true);
+        return;
+    }
+    setStatus('tmdb-search-status', 'Searching TMDB...');
+    apiJson('/movies/api/search?q=' + encodeURIComponent(query), { cache: 'no-store' })
+        .then(function(payload) {
+            renderTmdbSearchResults(payload.results || []);
+        })
+        .catch(function(err) {
+            setStatus('tmdb-search-status', err.message, true);
+        });
+}
+
+function renderServiceActionButtons() {
+    var holder = document.getElementById('torrent-service-actions');
+    holder.innerHTML = '';
+
+    if (!transmissionInstalled) {
+        var installBtn = document.createElement('button');
+        installBtn.type = 'button';
+        installBtn.className = 'movies-btn movies-btn-primary';
+        installBtn.textContent = 'Install Transmission';
+        installBtn.addEventListener('click', function() {
+            runTorrentServiceAction('install-service');
+        });
+        holder.appendChild(installBtn);
+        return;
+    }
+
+    if (!transmissionRunning) {
+        var startBtn = document.createElement('button');
+        startBtn.type = 'button';
+        startBtn.className = 'movies-btn movies-btn-primary';
+        startBtn.textContent = 'Start Transmission';
+        startBtn.addEventListener('click', function() {
+            runTorrentServiceAction('start-service');
+        });
+        holder.appendChild(startBtn);
+    }
+
+    var restartBtn = document.createElement('button');
+    restartBtn.type = 'button';
+    restartBtn.className = 'movies-btn movies-btn-muted';
+    restartBtn.textContent = 'Restart';
+    restartBtn.addEventListener('click', function() {
+        runTorrentServiceAction('restart-service');
+    });
+    holder.appendChild(restartBtn);
+}
+
+function renderTorrents(torrents) {
+    var body = document.getElementById('torrent-table-body');
+    body.innerHTML = '';
+    if (!torrents.length) {
+        body.innerHTML = '<tr><td colspan="7">No torrents yet.</td></tr>';
+        return;
+    }
+
+    torrents.forEach(function(torrent) {
+        var row = document.createElement('tr');
+        var progress = Number(torrent.progress || 0).toFixed(1);
+        var actionLabel = torrent.status === 'Paused' ? 'Resume' : 'Pause';
+        var actionValue = torrent.status === 'Paused' ? 'resume' : 'pause';
+        if (torrent.is_finished) {
+            actionLabel = 'Pause';
+            actionValue = 'pause';
+        }
+
+        row.innerHTML =
+            '<td>' + escapeHtml(torrent.name) + '</td>' +
+            '<td class="torrent-progress">' +
+                '<div class="torrent-progress-track"><div class="torrent-progress-fill" style="width:' + progress + '%"></div></div>' +
+                '<div style="margin-top:0.2rem;color:#b7c2db;">' + progress + '%</div>' +
+            '</td>' +
+            '<td>' + escapeHtml(torrent.download_speed) + '</td>' +
+            '<td>' + escapeHtml(torrent.upload_speed) + '</td>' +
+            '<td>' + escapeHtml(torrent.eta) + '</td>' +
+            '<td><span class="torrent-status-pill' + (torrent.is_finished ? ' completed' : '') + '">' + (torrent.is_finished ? '\u2713 ' : '') + escapeHtml(torrent.status) + '</span></td>' +
+            '<td>' +
+                '<button class="movies-btn movies-btn-muted" data-action="' + actionValue + '" data-id="' + torrent.id + '" style="padding:0.28rem 0.5rem;font-size:0.74rem;">' + actionLabel + '</button> ' +
+                '<button class="movies-btn movies-btn-danger" data-action="remove" data-id="' + torrent.id + '" style="padding:0.28rem 0.5rem;font-size:0.74rem;">Remove</button>' +
+            '</td>';
+
+        body.appendChild(row);
+    });
+
+    body.querySelectorAll('button[data-action]').forEach(function(button) {
+        button.addEventListener('click', function() {
+            var action = this.getAttribute('data-action');
+            var id = this.getAttribute('data-id');
+            var deleteData = false;
+            if (action === 'remove') {
+                deleteData = confirm('Also delete downloaded data from disk?\nOK = remove data, Cancel = keep files.');
+            }
+            runTorrentAction(action, id, deleteData);
+        });
+    });
+}
+
+function runTorrentServiceAction(action) {
+    setStatus('torrent-status', 'Running action: ' + action + ' ...');
+    apiJson('/movies/torrent/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: action })
+    })
+    .then(function(payload) {
+        setStatus('torrent-status', payload.message || 'Action completed');
+        return loadTorrents();
+    })
+    .catch(function(err) {
+        setStatus('torrent-status', err.message, true);
+    });
+}
+
+function runTorrentAction(action, id, deleteData) {
+    var message = action + ' torrent #' + id + '...';
+    setStatus('torrent-status', message);
+    apiJson('/movies/torrent/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: action, id: id, delete_data: !!deleteData })
+    })
+    .then(function() {
+        setStatus('torrent-status', 'Torrent action done.');
+        return loadTorrents();
+    })
+    .catch(function(err) {
+        setStatus('torrent-status', err.message, true);
+    });
+}
+
+function loadTorrents() {
+    return apiJson('/movies/torrent/list', { cache: 'no-store' })
+        .then(function(payload) {
+            transmissionInstalled = !!payload.installed;
+            transmissionRunning = !!payload.running;
+
+            var state = document.getElementById('torrent-service-state');
+            if (!transmissionInstalled) {
+                state.textContent = 'Transmission is not installed.';
+            } else if (!transmissionRunning) {
+                state.textContent = 'Transmission installed, service is stopped.';
+            } else {
+                state.textContent = (payload.count || 0) + ' torrent(s) active/completed.';
+            }
+            renderServiceActionButtons();
+            renderTorrents(payload.torrents || []);
+        })
+        .catch(function(err) {
+            setStatus('torrent-status', err.message, true);
+            renderServiceActionButtons();
+        });
+}
+
+function openTmdbModal() {
+    document.getElementById('tmdb-key-input').value = '';
+    setStatus('tmdb-settings-status', '');
+    document.getElementById('tmdb-modal').classList.add('open');
+}
+
+function closeTmdbModal() {
+    document.getElementById('tmdb-modal').classList.remove('open');
+}
+
+function saveTmdbKey(keyValue) {
+    apiJson('/movies/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tmdb_key: keyValue })
+    })
+    .then(function(payload) {
+        tmdbKeySet = !!payload.tmdb_key_set;
+        updateTmdbBanner();
+        setStatus('tmdb-settings-status', payload.message || 'Saved.');
+        loadMovies();
+    })
+    .catch(function(err) {
+        setStatus('tmdb-settings-status', err.message, true);
+    });
+}
+
+document.getElementById('tmdb-search-form').addEventListener('submit', function(event) {
+    event.preventDefault();
+    var query = document.getElementById('tmdb-search-input').value.trim();
+    if (!query) return;
+    searchTmdb(query);
+});
+
+document.getElementById('refresh-all-btn').addEventListener('click', function() {
+    loadMovies();
+    loadTorrents();
+});
+
+document.getElementById('refresh-movies-btn').addEventListener('click', function() {
+    loadMovies();
+});
+
+document.getElementById('movie-filter-input').addEventListener('input', function() {
+    renderMovies();
+});
+
+document.getElementById('movie-sort-select').addEventListener('change', function() {
+    renderMovies();
+});
+
+document.getElementById('torrent-add-form').addEventListener('submit', function(event) {
+    event.preventDefault();
+    var magnet = document.getElementById('magnet-input').value.trim();
+    var torrentFile = document.getElementById('torrent-file-input').files[0];
+    if (!magnet && !torrentFile) {
+        setStatus('torrent-status', 'Paste a magnet link or select a .torrent file.', true);
+        return;
+    }
+    var formData = new FormData();
+    if (magnet) formData.append('magnet', magnet);
+    if (torrentFile) formData.append('torrent_file', torrentFile);
+    setStatus('torrent-status', 'Adding torrent...');
+    fetch('/movies/torrent/add', { method: 'POST', body: formData })
+        .then(function(response) {
+            return response.json().catch(function() { return {}; }).then(function(payload) {
+                if (!response.ok) throw new Error(payload.error || ('Request failed (' + response.status + ')'));
+                return payload;
+            });
+        })
+        .then(function(payload) {
+            setStatus('torrent-status', payload.message || 'Torrent added.');
+            document.getElementById('magnet-input').value = '';
+            document.getElementById('torrent-file-input').value = '';
+            loadTorrents();
+        })
+        .catch(function(err) {
+            setStatus('torrent-status', err.message, true);
+        });
+});
+
+document.getElementById('movie-modal-close').addEventListener('click', closeMovieModal);
+document.getElementById('movie-modal').addEventListener('click', function(event) {
+    if (event.target === this) closeMovieModal();
+});
+document.getElementById('movie-play-btn').addEventListener('click', playSelectedMovie);
+document.getElementById('movie-open-file-btn').addEventListener('click', openSelectedMovieFile);
+document.getElementById('movie-delete-btn').addEventListener('click', deleteSelectedMovie);
+
+document.getElementById('open-tmdb-settings-btn').addEventListener('click', openTmdbModal);
+document.getElementById('banner-open-settings-btn').addEventListener('click', openTmdbModal);
+document.getElementById('tmdb-modal-close').addEventListener('click', closeTmdbModal);
+document.getElementById('tmdb-modal').addEventListener('click', function(event) {
+    if (event.target === this) closeTmdbModal();
+});
+
+document.getElementById('tmdb-form').addEventListener('submit', function(event) {
+    event.preventDefault();
+    var key = document.getElementById('tmdb-key-input').value.trim();
+    saveTmdbKey(key);
+});
+
+document.getElementById('tmdb-clear-btn').addEventListener('click', function() {
+    if (!confirm('Remove saved TMDB API key?')) return;
+    saveTmdbKey('');
+});
+
+document.getElementById('downloads-toggle').addEventListener('click', function() {
+    var content = document.getElementById('downloads-content');
+    content.classList.toggle('collapsed');
+});
+
+document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        closeMovieModal();
+        closeTmdbModal();
+    }
+});
+
+updateTmdbBanner();
+loadMovies();
+loadTorrents();
+torrentRefreshTimer = window.setInterval(loadTorrents, 3000);
+window.addEventListener('beforeunload', function() {
+    if (torrentRefreshTimer) {
+        window.clearInterval(torrentRefreshTimer);
+    }
+});
+</script>
+{% endblock %}
