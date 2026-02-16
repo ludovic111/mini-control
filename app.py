@@ -213,6 +213,127 @@ def build_logs_cmd(source, lines, grep_filter=''):
     return cmd, None
 
 
+def detect_speedtest_command():
+    """Detect an available speedtest command and expected output format."""
+    _, _, rc = run_cmd('command -v speedtest')
+    if rc == 0:
+        return {
+            'cmd': 'speedtest --accept-license --accept-gdpr --format=json',
+            'format': 'ookla-json',
+        }
+
+    _, _, rc = run_cmd('command -v speedtest-cli')
+    if rc == 0:
+        return {
+            'cmd': 'speedtest-cli --json',
+            'format': 'legacy-json',
+        }
+
+    return None
+
+
+def parse_speedtest_simple_output(output_text):
+    """Parse fallback plain-text speedtest output."""
+    ping_match = re.search(r'Ping:\s*([\d.]+)\s*ms', output_text, re.IGNORECASE)
+    down_match = re.search(r'Download:\s*([\d.]+)\s*Mbit/s', output_text, re.IGNORECASE)
+    up_match = re.search(r'Upload:\s*([\d.]+)\s*Mbit/s', output_text, re.IGNORECASE)
+
+    if not (ping_match and down_match and up_match):
+        return None
+
+    return {
+        'download_mbps': round(float(down_match.group(1)), 2),
+        'upload_mbps': round(float(up_match.group(1)), 2),
+        'ping_ms': round(float(ping_match.group(1)), 2),
+        'server': '',
+        'isp': '',
+    }
+
+
+def parse_speedtest_result(output_text, output_format):
+    """Parse speedtest output into normalized fields."""
+    parsed = None
+
+    if output_format in ('ookla-json', 'legacy-json'):
+        try:
+            payload = json.loads(output_text)
+        except Exception:
+            payload = None
+
+        if isinstance(payload, dict):
+            if output_format == 'ookla-json':
+                # Ookla CLI reports bandwidth in bytes/sec.
+                download = (((payload.get('download') or {}).get('bandwidth')) or 0) * 8 / 1_000_000
+                upload = (((payload.get('upload') or {}).get('bandwidth')) or 0) * 8 / 1_000_000
+                ping = ((payload.get('ping') or {}).get('latency')) or 0
+                server = (payload.get('server') or {}).get('name') or ''
+                isp = payload.get('isp') or ''
+                parsed = {
+                    'download_mbps': round(float(download), 2),
+                    'upload_mbps': round(float(upload), 2),
+                    'ping_ms': round(float(ping), 2),
+                    'server': str(server),
+                    'isp': str(isp),
+                }
+            else:
+                # speedtest-cli --json reports bits/sec for download/upload.
+                download = (payload.get('download') or 0) / 1_000_000
+                upload = (payload.get('upload') or 0) / 1_000_000
+                ping = payload.get('ping') or 0
+                server_info = payload.get('server') or {}
+                client_info = payload.get('client') or {}
+                server_name = server_info.get('sponsor') or server_info.get('name') or ''
+                parsed = {
+                    'download_mbps': round(float(download), 2),
+                    'upload_mbps': round(float(upload), 2),
+                    'ping_ms': round(float(ping), 2),
+                    'server': str(server_name),
+                    'isp': str(client_info.get('isp') or ''),
+                }
+
+    if parsed is None:
+        parsed = parse_speedtest_simple_output(output_text)
+
+    if parsed is None:
+        return None
+
+    parsed['download_mbps'] = max(parsed['download_mbps'], 0.0)
+    parsed['upload_mbps'] = max(parsed['upload_mbps'], 0.0)
+    parsed['ping_ms'] = max(parsed['ping_ms'], 0.0)
+    return parsed
+
+
+def run_speedtest():
+    """Run speedtest command and return normalized result."""
+    command_info = detect_speedtest_command()
+    if not command_info:
+        return None, (
+            'No speedtest tool found. Install one of: '
+            '`sudo apt install speedtest-cli` or Ookla `speedtest` CLI.'
+        )
+
+    stdout, stderr, rc = run_cmd(command_info['cmd'], timeout=240)
+    if rc != 0:
+        # Fallback for legacy installations where --json may not be supported.
+        if command_info['format'] == 'legacy-json':
+            stdout, stderr, rc = run_cmd('speedtest-cli --simple', timeout=240)
+            if rc == 0:
+                parsed = parse_speedtest_result(stdout, 'legacy-simple')
+                if parsed:
+                    parsed['raw_output'] = stdout
+                    parsed['tool'] = 'speedtest-cli --simple'
+                    return parsed, None
+        return None, (stderr or stdout or 'Speedtest command failed')
+
+    parsed = parse_speedtest_result(stdout, command_info['format'])
+    if not parsed:
+        return None, 'Could not parse speedtest output'
+
+    parsed['raw_output'] = stdout
+    parsed['tool'] = command_info['cmd']
+    return parsed, None
+
+
 def format_uptime():
     """Return a short uptime string."""
     boot_time = datetime.fromtimestamp(psutil.boot_time())
@@ -1539,6 +1660,12 @@ def network():
     )
 
 
+@app.route('/speedtest')
+@login_required
+def speedtest():
+    return render_template('speedtest.html')
+
+
 @app.route('/api/ping/<target>')
 @login_required
 def api_ping(target):
@@ -1563,6 +1690,15 @@ def api_ping(target):
 def api_connections():
     stdout, _, _ = run_cmd('ss -tuln', timeout=10)
     return jsonify({'output': stdout})
+
+
+@app.route('/api/speedtest/run', methods=['POST'])
+@login_required
+def api_speedtest_run():
+    result, error = run_speedtest()
+    if error:
+        return jsonify({'error': error}), 500
+    return jsonify({'status': 'ok', 'result': result})
 
 
 # --- Package Manager ---

@@ -28,3 +28,10 @@ All notable updates to Mini Control are listed here.
 ### Improved
 - Sidebar navigation now includes Scheduler between Packages and Logs.
 - Setup script and README include sudoers entries required for power actions.
+
+## 2026-02-16 (Speedtest Tab)
+
+### Added
+- New Speedtest page (`/speedtest`) with one-click internet speed tests.
+- Speedtest API endpoint (`POST /api/speedtest/run`) with parsed download, upload, ping, server, and ISP output.
+- Automatic command detection for both `speedtest` (Ookla CLI) and `speedtest-cli`, with fallback parsing.

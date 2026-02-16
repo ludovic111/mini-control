@@ -11,7 +11,7 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 - OS: Debian 12 Bookworm (`i386`)
 - User: `ludovic`
 - Server IP: `192.168.1.50`
-- Main panel pages: Dashboard, Services, Files, Terminal, Network, Packages, Scheduler, Logs, Changelog
+- Main panel pages: Dashboard, Services, Files, Terminal, Network, Speedtest, Packages, Scheduler, Logs, Changelog
 - Auth model: session-based login with password stored in `config.py` (`PASSWORD`)
 
 ## Features
@@ -22,6 +22,7 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 - **File Manager** - Browse, upload, download, delete, and create files/folders
 - **System Terminal** - Execute commands with shortcut buttons, persistent history, copy/clear output
 - **Network Info** - IP, MAC, gateway, DNS, ping tests, active connections
+- **Internet Speedtest** - Run download/upload/latency tests from the server and inspect raw output
 - **Package Manager** - Search, install, remove apt packages
 - **Scheduler** - Manage user cron jobs (add, edit, delete, quick presets, next run time)
 - **Logs Viewer** - journalctl, dmesg, syslog with filtering, auto-refresh, and log downloads
@@ -33,6 +34,7 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 - Debian 12 (i386) with Python 3.11
 - 2GB RAM (panel uses ~20-30MB)
 - SSH access
+- Optional for Speedtest tab: `speedtest` CLI or `speedtest-cli`
 
 ## Installation
 

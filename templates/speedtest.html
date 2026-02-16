@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}Speedtest - Mini Control{% endblock %}
+{% block page_title %}Internet Speedtest{% endblock %}
+{% block page_subtitle %}Measure download, upload, and latency from the server{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        Run Internet Speedtest
+        <div class="header-actions">
+            <button type="button" class="btn btn-primary" id="run-speedtest-btn">Run Test</button>
+        </div>
+    </div>
+    <div class="card-body">
+        <p class="text-muted" id="speedtest-status">Ready. Click "Run Test" to start.</p>
+        <p class="text-muted">Speed tests can take 15-60 seconds depending on network conditions.</p>
+    </div>
+</div>
+
+<div class="stats-grid section-gap-lg">
+    <div class="card stat-card">
+        <div class="card-header">Download</div>
+        <div class="card-body">
+            <div class="stat-value stat-live" id="speedtest-download">-- Mbps</div>
+        </div>
+    </div>
+    <div class="card stat-card">
+        <div class="card-header">Upload</div>
+        <div class="card-body">
+            <div class="stat-value stat-live" id="speedtest-upload">-- Mbps</div>
+        </div>
+    </div>
+    <div class="card stat-card">
+        <div class="card-header">Ping</div>
+        <div class="card-body">
+            <div class="stat-value stat-live" id="speedtest-ping">-- ms</div>
+        </div>
+    </div>
+    <div class="card stat-card">
+        <div class="card-header">Server</div>
+        <div class="card-body">
+            <div class="stat-value-sm stat-live" id="speedtest-server">--</div>
+            <div class="stat-detail stat-live" id="speedtest-isp">--</div>
+        </div>
+    </div>
+</div>
+
+<div class="card section-gap-lg">
+    <div class="card-header">Raw Output</div>
+    <div class="card-body">
+        <pre class="terminal-output" id="speedtest-raw-output">No result yet.</pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+var running = false;
+var runBtn = document.getElementById('run-speedtest-btn');
+var statusEl = document.getElementById('speedtest-status');
+
+function setMetric(id, value) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (el.textContent === value) return;
+    el.textContent = value;
+    el.classList.remove('value-changed');
+    void el.offsetWidth;
+    el.classList.add('value-changed');
+}
+
+function setStatus(message, className) {
+    statusEl.textContent = message;
+    statusEl.className = 'text-muted ' + (className || '');
+}
+
+function setRunningState(isRunning) {
+    running = isRunning;
+    runBtn.disabled = isRunning;
+    runBtn.textContent = isRunning ? 'Running...' : 'Run Test';
+}
+
+function runSpeedtest() {
+    if (running) return;
+    setRunningState(true);
+    setStatus('Running speedtest... This may take up to a minute.', 'text-warning-msg');
+    document.getElementById('speedtest-raw-output').textContent = 'Running speedtest command...';
+
+    fetch('/api/speedtest/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+    })
+    .then(function(resp) { return resp.json(); })
+    .then(function(data) {
+        if (data.error) {
+            setStatus('Error: ' + data.error, 'text-danger');
+            document.getElementById('speedtest-raw-output').textContent = data.error;
+            return;
+        }
+
+        var result = data.result || {};
+        setMetric('speedtest-download', (result.download_mbps || 0).toFixed(2) + ' Mbps');
+        setMetric('speedtest-upload', (result.upload_mbps || 0).toFixed(2) + ' Mbps');
+        setMetric('speedtest-ping', (result.ping_ms || 0).toFixed(2) + ' ms');
+        setMetric('speedtest-server', result.server || 'N/A');
+        setMetric('speedtest-isp', result.isp || 'N/A');
+
+        var now = new Date().toLocaleTimeString();
+        setStatus('Completed at ' + now + ' via ' + (result.tool || 'speedtest'), 'text-success-msg');
+        document.getElementById('speedtest-raw-output').textContent = result.raw_output || 'No raw output';
+    })
+    .catch(function() {
+        setStatus('Request failed.', 'text-danger');
+        document.getElementById('speedtest-raw-output').textContent = 'Request failed';
+    })
+    .finally(function() {
+        setRunningState(false);
+    });
+}
+
+runBtn.addEventListener('click', runSpeedtest);
+</script>
+{% endblock %}

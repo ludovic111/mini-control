@@ -593,6 +593,12 @@ a:hover {
     transform: translateY(1px);
 }
 
+.btn:disabled {
+    opacity: 0.68;
+    cursor: not-allowed;
+    transform: none;
+}
+
 .btn-primary {
     background: var(--accent);
 }
