@@ -39,6 +39,9 @@
             <li><a href="{{ url_for('packages') }}" class="{% if request.endpoint == 'packages' %}active{% endif %}">
                 <span class="nav-icon">&#128230;</span> Packages
             </a></li>
+            <li><a href="{{ url_for('scheduler') }}" class="{% if request.endpoint and request.endpoint.startswith('scheduler') %}active{% endif %}">
+                <span class="nav-icon">&#128339;</span> Scheduler
+            </a></li>
             <li><a href="{{ url_for('logs') }}" class="{% if request.endpoint == 'logs' %}active{% endif %}">
                 <span class="nav-icon">&#128220;</span> Logs
             </a></li>

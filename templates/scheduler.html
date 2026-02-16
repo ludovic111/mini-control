@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Scheduler - Mini Control{% endblock %}
+{% block page_title %}Scheduler{% endblock %}
+{% block page_subtitle %}Manage cron jobs for user ludovic{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">Add Scheduled Task</div>
+    <div class="card-body">
+        <div class="scheduler-presets">
+            <button type="button" class="btn btn-sm btn-muted preset-btn" data-cron="0 0 * * *">Daily at midnight</button>
+            <button type="button" class="btn btn-sm btn-muted preset-btn" data-cron="0 4 * * *">Daily at 4am</button>
+            <button type="button" class="btn btn-sm btn-muted preset-btn" data-cron="0 * * * *">Every hour</button>
+            <button type="button" class="btn btn-sm btn-muted preset-btn" data-cron="0 0 * * 0">Every Sunday</button>
+            <button type="button" class="btn btn-sm btn-muted preset-btn" data-cron="@reboot">Every reboot</button>
+        </div>
+        <p class="scheduler-helper">Cron format: <code>min hour day month weekday</code> (example: <code>0 4 * * *</code>)</p>
+        <form id="scheduler-add-form" class="scheduler-form">
+            <div class="form-group">
+                <label for="scheduler-label">Description / Label</label>
+                <input type="text" id="scheduler-label" placeholder="Example: Daily reboot">
+            </div>
+            <div class="form-group">
+                <label for="scheduler-cron">Cron Expression</label>
+                <input type="text" id="scheduler-cron" placeholder="0 4 * * * or @reboot" required>
+            </div>
+            <div class="form-group scheduler-command-group">
+                <label for="scheduler-command">Command</label>
+                <input type="text" id="scheduler-command" placeholder="sudo reboot" required>
+            </div>
+            <div class="form-group scheduler-submit-wrap">
+                <button type="submit" class="btn btn-primary btn-full">Add Task</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card section-gap-lg">
+    <div class="card-header">Quick Actions</div>
+    <div class="card-body scheduler-quick-actions">
+        <button type="button" class="btn btn-sm btn-warning" onclick="addQuickAction('0 4 * * *', 'sudo reboot', 'Reboot daily at 4am')">Reboot daily at 4am</button>
+        <button type="button" class="btn btn-sm btn-muted" onclick="addQuickAction('0 3 * * 0', 'rm -rf /tmp/*', 'Clear tmp weekly')">Clear tmp weekly</button>
+        <button type="button" class="btn btn-sm btn-success" onclick="addQuickAction('0 2 * * *', 'tar czf ~/backups/config-$(date +\\%Y\\%m\\%d).tar.gz /etc/', 'Backup configs daily')">Backup configs daily</button>
+        <button type="button" class="btn btn-sm btn-primary" onclick="addQuickAction('0 5 * * 1', 'sudo apt update && sudo apt upgrade -y', 'Update system weekly')">Update system weekly</button>
+    </div>
+</div>
+
+<div class="card section-gap-lg">
+    <div class="card-header">Existing Cron Jobs</div>
+    <div class="card-body">
+        <div class="table-wrapper">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Label</th>
+                        <th>Schedule</th>
+                        <th>Next Run</th>
+                        <th>Command</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for job in jobs %}
+                    <tr id="job-row-{{ job.id }}">
+                        <td>{{ job.label or '-' }}</td>
+                        <td><code>{{ job.schedule }}</code></td>
+                        <td>{{ job.next_run }}</td>
+                        <td><code class="scheduler-command">{{ job.command }}</code></td>
+                        <td class="action-btns">
+                            <button type="button" class="btn btn-sm btn-primary" onclick="startEdit({{ job.id }})">Edit</button>
+                            <button type="button" class="btn btn-sm btn-danger" onclick="deleteJob({{ job.id }})">Delete</button>
+                        </td>
+                    </tr>
+                    <tr id="job-edit-row-{{ job.id }}" class="scheduler-edit-row" style="display:none;">
+                        <td colspan="5">
+                            <div class="scheduler-edit-grid">
+                                <input type="text" id="edit-label-{{ job.id }}" value="{{ job.label }}">
+                                <input type="text" id="edit-schedule-{{ job.id }}" value="{{ job.schedule }}">
+                                <input type="text" id="edit-command-{{ job.id }}" value="{{ job.command }}">
+                                <div class="action-btns">
+                                    <button type="button" class="btn btn-sm btn-success" onclick="saveEdit({{ job.id }})">Save</button>
+                                    <button type="button" class="btn btn-sm btn-muted" onclick="cancelEdit({{ job.id }})">Cancel</button>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% if not jobs %}
+                    <tr><td colspan="5" class="text-center">No cron jobs found.</td></tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="card section-gap-lg">
+    <div class="card-header">Raw Crontab</div>
+    <div class="card-body">
+        <pre class="terminal-output">{{ raw_crontab or '(no crontab entries)' }}</pre>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.querySelectorAll('.preset-btn').forEach(function(button) {
+    button.addEventListener('click', function() {
+        document.getElementById('scheduler-cron').value = this.getAttribute('data-cron');
+    });
+});
+
+document.getElementById('scheduler-add-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    addJob(
+        document.getElementById('scheduler-cron').value.trim(),
+        document.getElementById('scheduler-command').value.trim(),
+        document.getElementById('scheduler-label').value.trim()
+    );
+});
+
+function addJob(schedule, command, label) {
+    if (!schedule || !command) {
+        alert('Schedule and command are required.');
+        return;
+    }
+
+    fetch('/scheduler/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ schedule: schedule, command: command, label: label || '' })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) {
+            alert('Error: ' + d.error);
+            return;
+        }
+        location.reload();
+    })
+    .catch(function() {
+        alert('Request failed.');
+    });
+}
+
+function addQuickAction(schedule, command, label) {
+    if (!confirm('Add quick action "' + label + '"?')) return;
+    addJob(schedule, command, label);
+}
+
+function startEdit(jobId) {
+    document.getElementById('job-edit-row-' + jobId).style.display = 'table-row';
+}
+
+function cancelEdit(jobId) {
+    document.getElementById('job-edit-row-' + jobId).style.display = 'none';
+}
+
+function saveEdit(jobId) {
+    var schedule = document.getElementById('edit-schedule-' + jobId).value.trim();
+    var command = document.getElementById('edit-command-' + jobId).value.trim();
+    var label = document.getElementById('edit-label-' + jobId).value.trim();
+
+    if (!schedule || !command) {
+        alert('Schedule and command are required.');
+        return;
+    }
+
+    fetch('/scheduler/edit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            job_id: jobId,
+            schedule: schedule,
+            command: command,
+            label: label
+        })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) {
+            alert('Error: ' + d.error);
+            return;
+        }
+        location.reload();
+    })
+    .catch(function() {
+        alert('Request failed.');
+    });
+}
+
+function deleteJob(jobId) {
+    if (!confirm('Delete this cron job?')) return;
+
+    fetch('/scheduler/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: jobId })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.error) {
+            alert('Error: ' + d.error);
+            return;
+        }
+        location.reload();
+    })
+    .catch(function() {
+        alert('Request failed.');
+    });
+}
+</script>
+{% endblock %}

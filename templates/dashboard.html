@@ -1,14 +1,27 @@
 {% extends "base.html" %}
 {% block title %}Dashboard - Mini Control{% endblock %}
-{% block page_title %}Dashboard{% endblock %}
-{% block page_subtitle %}Live CPU, memory, disk, and critical service health{% endblock %}
+{% block page_title %}<span class="dashboard-title-wrap">Dashboard <span class="live-dot" id="live-dot"></span></span>{% endblock %}
+{% block page_subtitle %}Live CPU, memory, disk, critical services, charts, and power management{% endblock %}
 
 {% block content %}
-<div class="stats-grid">
+<div class="card">
+    <div class="card-header">
+        Live Auto-Refresh
+        <div class="header-actions">
+            <span class="badge badge-success" id="refresh-state">Running</span>
+            <button type="button" class="btn btn-sm btn-muted" id="refresh-toggle-btn">Pause</button>
+        </div>
+    </div>
+    <div class="card-body">
+        <span class="text-muted" id="last-updated-text">Last updated: --</span>
+    </div>
+</div>
+
+<div class="stats-grid section-gap-lg">
     <div class="card stat-card">
         <div class="card-header">CPU Usage</div>
         <div class="card-body">
-            <div class="stat-value" id="cpu-percent">{{ cpu_percent }}%</div>
+            <div class="stat-value stat-live" id="cpu-percent">{{ cpu_percent }}%</div>
             <div class="progress-bar">
                 <div class="progress-fill" id="cpu-bar" style="width: {{ cpu_percent }}%"></div>
             </div>
@@ -18,8 +31,8 @@
     <div class="card stat-card">
         <div class="card-header">Memory</div>
         <div class="card-body">
-            <div class="stat-value" id="mem-percent">{{ mem_percent }}%</div>
-            <div class="stat-detail" id="mem-detail">{{ mem_used }} / {{ mem_total }}</div>
+            <div class="stat-value stat-live" id="mem-percent">{{ mem_percent }}%</div>
+            <div class="stat-detail stat-live" id="mem-detail">{{ mem_used }} / {{ mem_total }}</div>
             <div class="progress-bar">
                 <div class="progress-fill" id="mem-bar" style="width: {{ mem_percent }}%"></div>
             </div>
@@ -29,8 +42,8 @@
     <div class="card stat-card">
         <div class="card-header">Disk</div>
         <div class="card-body">
-            <div class="stat-value" id="disk-percent">{{ disk_percent }}%</div>
-            <div class="stat-detail" id="disk-detail">{{ disk_used }} / {{ disk_total }}</div>
+            <div class="stat-value stat-live" id="disk-percent">{{ disk_percent }}%</div>
+            <div class="stat-detail stat-live" id="disk-detail">{{ disk_used }} / {{ disk_total }}</div>
             <div class="progress-bar">
                 <div class="progress-fill" id="disk-bar" style="width: {{ disk_percent }}%"></div>
             </div>
@@ -40,21 +53,21 @@
     <div class="card stat-card">
         <div class="card-header">CPU Temperature</div>
         <div class="card-body">
-            <div class="stat-value" id="cpu-temp">{{ cpu_temp }}&deg;C</div>
+            <div class="stat-value stat-live" id="cpu-temp">{{ cpu_temp }}{% if cpu_temp != 'N/A' %}&deg;C{% endif %}</div>
         </div>
     </div>
 
     <div class="card stat-card">
         <div class="card-header">Uptime</div>
         <div class="card-body">
-            <div class="stat-value" id="uptime">{{ uptime }}</div>
+            <div class="stat-value stat-value-sm stat-live" id="uptime">{{ uptime }}</div>
         </div>
     </div>
 
     <div class="card stat-card">
         <div class="card-header">Load Average</div>
         <div class="card-body">
-            <div class="stat-value stat-value-sm" id="load-avg">{{ load_avg }}</div>
+            <div class="stat-value stat-value-sm stat-live" id="load-avg">{{ load_avg }}</div>
         </div>
     </div>
 </div>
@@ -72,37 +85,479 @@
         </div>
     </div>
 </div>
+
+<div class="card section-gap-lg">
+    <div class="card-header">Monitoring History (Last Hour)</div>
+    <div class="card-body">
+        <div class="chart-grid">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <span>CPU Usage %</span>
+                    <div class="chart-legend">
+                        <span class="legend-item"><span class="legend-dot cpu"></span>CPU</span>
+                    </div>
+                </div>
+                <canvas id="cpu-chart" class="monitor-chart"></canvas>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <span>RAM Usage %</span>
+                    <div class="chart-legend">
+                        <span class="legend-item"><span class="legend-dot ram"></span>RAM</span>
+                    </div>
+                </div>
+                <canvas id="ram-chart" class="monitor-chart"></canvas>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <span>Disk I/O (MB/s)</span>
+                    <div class="chart-legend">
+                        <span class="legend-item"><span class="legend-dot cpu"></span>Read</span>
+                        <span class="legend-item"><span class="legend-dot disk-write"></span>Write</span>
+                    </div>
+                </div>
+                <canvas id="disk-chart" class="monitor-chart"></canvas>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <span>Network Bandwidth (MB/s)</span>
+                    <div class="chart-legend">
+                        <span class="legend-item"><span class="legend-dot cpu"></span>Recv</span>
+                        <span class="legend-item"><span class="legend-dot net-sent"></span>Sent</span>
+                    </div>
+                </div>
+                <canvas id="net-chart" class="monitor-chart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card section-gap-lg">
+    <div class="card-header">Power Management</div>
+    <div class="card-body">
+        <div class="power-actions">
+            <button type="button" class="btn btn-warning" id="reboot-btn">Reboot</button>
+            <button type="button" class="btn btn-power" id="shutdown-btn">Shutdown</button>
+        </div>
+        <form id="schedule-reboot-form" class="power-schedule-form section-gap">
+            <label for="reboot-minutes">Reboot in X minutes</label>
+            <input type="number" id="reboot-minutes" min="1" step="1" placeholder="15" required>
+            <button type="submit" class="btn btn-primary">Schedule</button>
+            <button type="button" class="btn btn-muted" id="cancel-schedule-btn" {% if not scheduled_shutdown.scheduled %}style="display:none;"{% endif %}>Cancel Scheduled Shutdown</button>
+        </form>
+        <div class="section-gap">
+            <p class="text-muted" id="schedule-status-text">
+                {% if scheduled_shutdown.scheduled %}
+                Scheduled {{ scheduled_shutdown.mode or 'shutdown' }}{% if scheduled_shutdown.at %} at {{ scheduled_shutdown.at }}{% endif %}.
+                {% else %}
+                No shutdown or reboot is currently scheduled.
+                {% endif %}
+            </p>
+            <p class="power-status-message" id="power-status-message"></p>
+        </div>
+    </div>
+</div>
+
+<div class="modal confirm-modal" id="power-confirm-modal" style="display:none;">
+    <div class="modal-content confirm-modal-content">
+        <div class="modal-header confirm-modal-header">
+            <h3 id="confirm-modal-title">Confirm Action</h3>
+        </div>
+        <div class="confirm-modal-body">
+            <p id="confirm-modal-text"></p>
+        </div>
+        <div class="confirm-modal-footer">
+            <button type="button" class="btn btn-muted" id="confirm-cancel-btn">Cancel</button>
+            <button type="button" class="btn btn-danger" id="confirm-ok-btn">Confirm</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-function refreshDashboard() {
-    fetch('/api/dashboard')
-        .then(r => r.json())
-        .then(d => {
-            document.getElementById('cpu-percent').textContent = d.cpu_percent + '%';
-            document.getElementById('cpu-bar').style.width = d.cpu_percent + '%';
-            document.getElementById('mem-percent').textContent = d.mem_percent + '%';
-            document.getElementById('mem-detail').textContent = d.mem_used + ' / ' + d.mem_total;
-            document.getElementById('mem-bar').style.width = d.mem_percent + '%';
-            document.getElementById('disk-percent').textContent = d.disk_percent + '%';
-            document.getElementById('disk-detail').textContent = d.disk_used + ' / ' + d.disk_total;
-            document.getElementById('disk-bar').style.width = d.disk_percent + '%';
-            document.getElementById('cpu-temp').innerHTML = d.cpu_temp + '&deg;C';
-            document.getElementById('uptime').textContent = d.uptime;
-            document.getElementById('load-avg').textContent = d.load_avg;
-            document.getElementById('ssh-dot').className = 'status-dot ' + (d.ssh_active ? 'status-active' : 'status-inactive');
-            document.getElementById('panel-dot').className = 'status-dot ' + (d.panel_active ? 'status-active' : 'status-inactive');
+var refreshPaused = false;
+var refreshTimer = null;
+var rebootWatchTimer = null;
+var rebootCountdownTimer = null;
+var rebootCountdownSeconds = 0;
+var pendingConfirmAction = null;
+var initialScheduledShutdown = {{ scheduled_shutdown|tojson }};
 
-            // Color bars based on usage
-            ['cpu', 'mem', 'disk'].forEach(function(key) {
-                var val = d[key + '_percent'];
-                var bar = document.getElementById(key + '-bar');
-                bar.className = 'progress-fill' + (val > 90 ? ' bar-danger' : val > 70 ? ' bar-warn' : '');
-            });
-        })
-        .catch(function() {});
+function setAnimatedText(id, text) {
+    var element = document.getElementById(id);
+    if (!element) return;
+    var value = String(text);
+    if (element.textContent === value) return;
+
+    element.textContent = value;
+    element.classList.remove('value-changed');
+    void element.offsetWidth;
+    element.classList.add('value-changed');
 }
-setInterval(refreshDashboard, 5000);
+
+function setRefreshRunning(running) {
+    var stateBadge = document.getElementById('refresh-state');
+    var toggleBtn = document.getElementById('refresh-toggle-btn');
+    var liveDot = document.getElementById('live-dot');
+
+    if (running) {
+        stateBadge.textContent = 'Running';
+        stateBadge.className = 'badge badge-success';
+        toggleBtn.textContent = 'Pause';
+        liveDot.classList.remove('paused');
+    } else {
+        stateBadge.textContent = 'Paused';
+        stateBadge.className = 'badge badge-muted';
+        toggleBtn.textContent = 'Resume';
+        liveDot.classList.add('paused');
+    }
+}
+
+function updateProgressBar(key, value) {
+    var bar = document.getElementById(key + '-bar');
+    if (!bar) return;
+    bar.style.width = value + '%';
+    bar.className = 'progress-fill' + (value > 90 ? ' bar-danger' : value > 70 ? ' bar-warn' : '');
+}
+
+function updateScheduleStatus(scheduleData) {
+    var info = scheduleData || { scheduled: false };
+    var text = document.getElementById('schedule-status-text');
+    var cancelBtn = document.getElementById('cancel-schedule-btn');
+
+    if (info.scheduled) {
+        var mode = info.mode || 'shutdown';
+        var when = info.at ? (' at ' + info.at) : '';
+        text.textContent = 'Scheduled ' + mode + when + '.';
+        cancelBtn.style.display = 'inline-flex';
+    } else {
+        text.textContent = 'No shutdown or reboot is currently scheduled.';
+        cancelBtn.style.display = 'none';
+    }
+}
+
+function updateLastUpdated() {
+    document.getElementById('last-updated-text').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+}
+
+function refreshStats() {
+    return fetch('/api/stats', { cache: 'no-store' })
+        .then(function(response) { return response.json(); })
+        .then(function(data) {
+            setAnimatedText('cpu-percent', data.cpu_percent + '%');
+            setAnimatedText('mem-percent', data.mem_percent + '%');
+            setAnimatedText('disk-percent', data.disk_percent + '%');
+            setAnimatedText('mem-detail', data.mem_used + ' / ' + data.mem_total);
+            setAnimatedText('disk-detail', data.disk_used + ' / ' + data.disk_total);
+            setAnimatedText('cpu-temp', data.cpu_temp === 'N/A' ? 'N/A' : (data.cpu_temp + '\u00b0C'));
+            setAnimatedText('uptime', data.uptime);
+            setAnimatedText('load-avg', data.load_avg);
+
+            updateProgressBar('cpu', data.cpu_percent);
+            updateProgressBar('mem', data.mem_percent);
+            updateProgressBar('disk', data.disk_percent);
+
+            document.getElementById('ssh-dot').className = 'status-dot ' + (data.ssh_active ? 'status-active' : 'status-inactive');
+            document.getElementById('panel-dot').className = 'status-dot ' + (data.panel_active ? 'status-active' : 'status-inactive');
+
+            updateScheduleStatus(data.scheduled_shutdown);
+            updateLastUpdated();
+        });
+}
+
+function formatChartTime(unixTs) {
+    var d = new Date(unixTs * 1000);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function prepareCanvas(canvas) {
+    var dpr = window.devicePixelRatio || 1;
+    var width = Math.max(Math.floor(canvas.clientWidth), 240);
+    var height = Math.max(Math.floor(canvas.clientHeight), 200);
+    var pixelWidth = Math.floor(width * dpr);
+    var pixelHeight = Math.floor(height * dpr);
+
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
+    }
+
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx: ctx, width: width, height: height };
+}
+
+function niceMaxValue(value) {
+    if (value <= 0) return 1;
+    var exponent = Math.floor(Math.log10(value));
+    var fraction = value / Math.pow(10, exponent);
+    var niceFraction = 1;
+    if (fraction > 5) niceFraction = 10;
+    else if (fraction > 2) niceFraction = 5;
+    else if (fraction > 1) niceFraction = 2;
+    return niceFraction * Math.pow(10, exponent);
+}
+
+function drawChart(canvasId, history, lines, options) {
+    var canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    var setup = prepareCanvas(canvas);
+    var ctx = setup.ctx;
+    var width = setup.width;
+    var height = setup.height;
+    var pad = { left: 44, right: 12, top: 14, bottom: 24 };
+    var plotW = width - pad.left - pad.right;
+    var plotH = height - pad.top - pad.bottom;
+    var entries = history || [];
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.strokeStyle = 'rgba(224,224,224,0.18)';
+    ctx.lineWidth = 1;
+    for (var i = 0; i <= 4; i++) {
+        var y = pad.top + (plotH * i / 4);
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(width - pad.right, y);
+        ctx.stroke();
+    }
+
+    var yMax = options.fixedMax || 100;
+    if (!options.fixedMax) {
+        var maxValue = 0;
+        entries.forEach(function(entry) {
+            lines.forEach(function(line) {
+                maxValue = Math.max(maxValue, Number(entry[line.key]) || 0);
+            });
+        });
+        yMax = niceMaxValue(maxValue || 1);
+    }
+
+    ctx.fillStyle = '#e0e0e0';
+    ctx.font = '11px "IBM Plex Mono", monospace';
+    ctx.textAlign = 'right';
+    for (var j = 0; j <= 4; j++) {
+        var value = (yMax * (4 - j) / 4);
+        var text = options.valueSuffix ? value.toFixed(0) + options.valueSuffix : value.toFixed(0);
+        ctx.fillText(text, pad.left - 6, pad.top + (plotH * j / 4) + 4);
+    }
+
+    if (entries.length < 2) {
+        ctx.fillStyle = 'rgba(224,224,224,0.7)';
+        ctx.textAlign = 'center';
+        ctx.fillText('Collecting data...', width / 2, height / 2);
+        return;
+    }
+
+    var firstTs = entries[0].time;
+    var lastTs = entries[entries.length - 1].time;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#e0e0e0';
+    ctx.fillText(formatChartTime(firstTs), pad.left, height - 8);
+    ctx.fillText(formatChartTime(Math.floor((firstTs + lastTs) / 2)), pad.left + (plotW / 2), height - 8);
+    ctx.fillText(formatChartTime(lastTs), width - pad.right, height - 8);
+
+    lines.forEach(function(line) {
+        ctx.beginPath();
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = line.color;
+
+        entries.forEach(function(entry, idx) {
+            var x = pad.left + (idx / (entries.length - 1)) * plotW;
+            var raw = Number(entry[line.key]) || 0;
+            var bounded = Math.max(0, Math.min(raw, yMax));
+            var y = pad.top + (1 - (bounded / yMax)) * plotH;
+            if (idx === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        });
+
+        ctx.stroke();
+    });
+}
+
+function refreshHistory() {
+    return fetch('/api/history', { cache: 'no-store' })
+        .then(function(response) { return response.json(); })
+        .then(function(data) {
+            drawChart('cpu-chart', data.cpu_history, [
+                { key: 'value', color: '#4ecca3' }
+            ], { fixedMax: 100, valueSuffix: '%' });
+
+            drawChart('ram-chart', data.ram_history, [
+                { key: 'value', color: '#e94560' }
+            ], { fixedMax: 100, valueSuffix: '%' });
+
+            drawChart('disk-chart', data.disk_io_history, [
+                { key: 'read', color: '#4ecca3' },
+                { key: 'write', color: '#f0a500' }
+            ], { valueSuffix: '' });
+
+            drawChart('net-chart', data.net_history, [
+                { key: 'recv', color: '#4ecca3' },
+                { key: 'sent', color: '#9b59b6' }
+            ], { valueSuffix: '' });
+        });
+}
+
+function refreshDashboard() {
+    if (refreshPaused) return;
+    Promise.all([refreshStats(), refreshHistory()]).catch(function() {});
+}
+
+function openConfirmModal(title, message, confirmClass, onConfirm) {
+    pendingConfirmAction = onConfirm;
+    document.getElementById('confirm-modal-title').textContent = title;
+    document.getElementById('confirm-modal-text').textContent = message;
+
+    var confirmBtn = document.getElementById('confirm-ok-btn');
+    confirmBtn.className = 'btn';
+    confirmBtn.classList.add(confirmClass || 'btn-danger');
+
+    document.getElementById('power-confirm-modal').style.display = 'flex';
+}
+
+function closeConfirmModal() {
+    pendingConfirmAction = null;
+    document.getElementById('power-confirm-modal').style.display = 'none';
+}
+
+function setPowerStatus(message, className) {
+    var el = document.getElementById('power-status-message');
+    el.textContent = message || '';
+    el.className = 'power-status-message ' + (className || '');
+}
+
+function clearRebootWatchers() {
+    if (rebootWatchTimer) { clearInterval(rebootWatchTimer); rebootWatchTimer = null; }
+    if (rebootCountdownTimer) { clearInterval(rebootCountdownTimer); rebootCountdownTimer = null; }
+}
+
+function startRebootWatch() {
+    clearRebootWatchers();
+    rebootCountdownSeconds = 120;
+    setPowerStatus('Reboot in progress. Estimated recovery: ' + rebootCountdownSeconds + 's', 'text-warning-msg');
+
+    rebootCountdownTimer = setInterval(function() {
+        rebootCountdownSeconds = Math.max(rebootCountdownSeconds - 1, 0);
+        setPowerStatus('Reboot in progress. Estimated recovery: ' + rebootCountdownSeconds + 's', 'text-warning-msg');
+    }, 1000);
+
+    rebootWatchTimer = setInterval(function() {
+        fetch('/api/power/ping', { cache: 'no-store' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.online) {
+                    clearRebootWatchers();
+                    setPowerStatus('Server is back online.', 'text-success-msg');
+                    refreshDashboard();
+                }
+            })
+            .catch(function() {});
+    }, 10000);
+}
+
+function postPowerAction(url, payload, onSuccess) {
+    fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {})
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.error) {
+            setPowerStatus('Error: ' + data.error, 'text-danger');
+            return;
+        }
+        if (onSuccess) onSuccess(data);
+    })
+    .catch(function() {
+        setPowerStatus('Request failed.', 'text-danger');
+    });
+}
+
+document.getElementById('refresh-toggle-btn').addEventListener('click', function() {
+    refreshPaused = !refreshPaused;
+    setRefreshRunning(!refreshPaused);
+    if (!refreshPaused) {
+        refreshDashboard();
+    }
+});
+
+document.getElementById('reboot-btn').addEventListener('click', function() {
+    openConfirmModal(
+        'Confirm Reboot',
+        'Are you sure you want to reboot? The server will be unreachable for about 2 minutes.',
+        'btn-warning',
+        function() {
+            postPowerAction('/api/power/reboot', {}, function() {
+                setPowerStatus('Reboot command sent. Waiting for server...', 'text-warning-msg');
+                startRebootWatch();
+            });
+        }
+    );
+});
+
+document.getElementById('shutdown-btn').addEventListener('click', function() {
+    openConfirmModal(
+        'Confirm Shutdown',
+        'Are you sure you want to shut down? You will need physical access to turn the server back on.',
+        'btn-power',
+        function() {
+            postPowerAction('/api/power/shutdown', {}, function() {
+                clearRebootWatchers();
+                setPowerStatus('Shutdown command sent. Server should go offline shortly.', 'text-danger');
+            });
+        }
+    );
+});
+
+document.getElementById('schedule-reboot-form').addEventListener('submit', function(e) {
+    e.preventDefault();
+    var minutes = document.getElementById('reboot-minutes').value.trim();
+    if (!minutes) return;
+
+    postPowerAction('/api/power/schedule', { minutes: minutes }, function(data) {
+        setPowerStatus(data.message || 'Reboot scheduled.', 'text-success-msg');
+        updateScheduleStatus(data.scheduled_shutdown);
+    });
+});
+
+document.getElementById('cancel-schedule-btn').addEventListener('click', function() {
+    postPowerAction('/api/power/cancel', {}, function(data) {
+        setPowerStatus(data.message || 'Scheduled shutdown canceled.', 'text-success-msg');
+        updateScheduleStatus({ scheduled: false });
+    });
+});
+
+document.getElementById('confirm-cancel-btn').addEventListener('click', closeConfirmModal);
+document.getElementById('confirm-ok-btn').addEventListener('click', function() {
+    var action = pendingConfirmAction;
+    closeConfirmModal();
+    if (action) action();
+});
+
+document.getElementById('power-confirm-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeConfirmModal();
+});
+
+window.addEventListener('resize', function() {
+    refreshHistory().catch(function() {});
+});
+
+window.addEventListener('beforeunload', function() {
+    clearRebootWatchers();
+    if (refreshTimer) clearInterval(refreshTimer);
+});
+
+setRefreshRunning(true);
+updateScheduleStatus(initialScheduledShutdown);
+refreshDashboard();
+refreshTimer = setInterval(refreshDashboard, 5000);
 </script>
 {% endblock %}

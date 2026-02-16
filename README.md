@@ -11,18 +11,21 @@ A lightweight web control panel for managing a Mac Mini server running Debian 12
 - OS: Debian 12 Bookworm (`i386`)
 - User: `ludovic`
 - Server IP: `192.168.1.50`
-- Main panel pages: Dashboard, Services, Files, Terminal, Network, Packages, Logs, Changelog
+- Main panel pages: Dashboard, Services, Files, Terminal, Network, Packages, Scheduler, Logs, Changelog
 - Auth model: session-based login with password stored in `config.py` (`PASSWORD`)
 
 ## Features
 
-- **Dashboard** - CPU, RAM, disk usage, uptime, temperature, load average, service status
+- **Dashboard** - Live auto-refreshing CPU, RAM, disk, temperature, uptime, load average, service status
+- **Monitoring Charts** - Last-hour CPU, RAM, disk I/O, and network bandwidth history (in-memory, lightweight)
 - **Service Manager** - List, start, stop, restart systemd services, view logs
 - **File Manager** - Browse, upload, download, delete, and create files/folders
 - **System Terminal** - Execute commands with shortcut buttons, persistent history, copy/clear output
 - **Network Info** - IP, MAC, gateway, DNS, ping tests, active connections
 - **Package Manager** - Search, install, remove apt packages
+- **Scheduler** - Manage user cron jobs (add, edit, delete, quick presets, next run time)
 - **Logs Viewer** - journalctl, dmesg, syslog with filtering, auto-refresh, and log downloads
+- **Power Management** - Reboot, shutdown, schedule reboot, and cancel scheduled shutdown
 - **Changelog** - Full git commit history + local `CHANGELOG.md` release notes
 
 ## Requirements
@@ -105,4 +108,7 @@ Edit `config.py` to change:
 - The panel runs as user `ludovic`, not root
 - Sudo permissions are limited to systemctl and apt-get operations
 - File manager is restricted to `/home/ludovic`
+- For Power actions, add sudoers rules:
+  - `ludovic ALL=(ALL) NOPASSWD: /sbin/reboot`
+  - `ludovic ALL=(ALL) NOPASSWD: /sbin/shutdown *`
 - Consider using a reverse proxy with HTTPS for production use

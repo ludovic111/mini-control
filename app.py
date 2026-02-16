@@ -5,13 +5,15 @@ import base64
 import hashlib
 import json
 import os
+import re
 import secrets
 import shlex
 import signal
 import subprocess
+import threading
 import time
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
@@ -27,6 +29,96 @@ import config
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
 
+HISTORY_LIMIT = 720  # 60 minutes @ 5-second samples
+STATS_INTERVAL = 5
+
+CPU_HISTORY = []
+RAM_HISTORY = []
+DISK_IO_HISTORY = []
+NET_HISTORY = []
+
+HISTORY_LOCK = threading.Lock()
+STATS_THREAD_LOCK = threading.Lock()
+STATS_THREAD_STARTED = False
+
+
+def append_capped(history, entry):
+    """Append a history entry and keep only the latest HISTORY_LIMIT points."""
+    history.append(entry)
+    if len(history) > HISTORY_LIMIT:
+        del history[:-HISTORY_LIMIT]
+
+
+def stats_collector_loop():
+    """Collect CPU/RAM/disk I/O/network stats every STATS_INTERVAL seconds."""
+    psutil.cpu_percent(interval=None)  # warm-up call for accurate next reading
+    prev_ts = time.time()
+    prev_disk = psutil.disk_io_counters()
+    prev_net = psutil.net_io_counters()
+
+    while True:
+        loop_started = time.time()
+        now_ts = int(loop_started)
+
+        cpu_percent = round(psutil.cpu_percent(interval=None), 2)
+        ram_percent = round(psutil.virtual_memory().percent, 2)
+
+        disk_read_mb_s = 0.0
+        disk_write_mb_s = 0.0
+        net_recv_mb_s = 0.0
+        net_sent_mb_s = 0.0
+
+        disk_now = psutil.disk_io_counters()
+        net_now = psutil.net_io_counters()
+        elapsed = max(loop_started - prev_ts, 1e-6)
+
+        if prev_disk and disk_now:
+            disk_read_mb_s = max(disk_now.read_bytes - prev_disk.read_bytes, 0) / (1024 * 1024) / elapsed
+            disk_write_mb_s = max(disk_now.write_bytes - prev_disk.write_bytes, 0) / (1024 * 1024) / elapsed
+
+        if prev_net and net_now:
+            net_recv_mb_s = max(net_now.bytes_recv - prev_net.bytes_recv, 0) / (1024 * 1024) / elapsed
+            net_sent_mb_s = max(net_now.bytes_sent - prev_net.bytes_sent, 0) / (1024 * 1024) / elapsed
+
+        with HISTORY_LOCK:
+            append_capped(CPU_HISTORY, {'time': now_ts, 'value': cpu_percent})
+            append_capped(RAM_HISTORY, {'time': now_ts, 'value': ram_percent})
+            append_capped(DISK_IO_HISTORY, {
+                'time': now_ts,
+                'read': round(disk_read_mb_s, 3),
+                'write': round(disk_write_mb_s, 3),
+            })
+            append_capped(NET_HISTORY, {
+                'time': now_ts,
+                'recv': round(net_recv_mb_s, 3),
+                'sent': round(net_sent_mb_s, 3),
+            })
+
+        prev_ts = loop_started
+        prev_disk = disk_now
+        prev_net = net_now
+
+        sleep_for = STATS_INTERVAL - (time.time() - loop_started)
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+
+
+def start_stats_collector():
+    """Start background metrics collector once per process."""
+    global STATS_THREAD_STARTED
+    with STATS_THREAD_LOCK:
+        if STATS_THREAD_STARTED:
+            return
+        if app.debug and os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+            return
+        STATS_THREAD_STARTED = True
+        thread = threading.Thread(
+            target=stats_collector_loop,
+            daemon=True,
+            name='mini-control-stats'
+        )
+        thread.start()
+
 
 # --- Auth decorator ---
 
@@ -37,6 +129,12 @@ def login_required(f):
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated
+
+
+@app.before_request
+def ensure_background_workers():
+    """Ensure lightweight background workers are running."""
+    start_stats_collector()
 
 
 # --- Helper functions ---
@@ -52,6 +150,11 @@ def run_cmd(cmd, timeout=30, shell=True):
         return '', 'Command timed out', 1
     except Exception as e:
         return '', str(e), 1
+
+
+def request_payload():
+    """Get request payload from JSON body or form fields."""
+    return request.get_json(silent=True) or request.form
 
 
 def safe_path(requested_path):
@@ -110,6 +213,69 @@ def build_logs_cmd(source, lines, grep_filter=''):
     return cmd, None
 
 
+def format_uptime():
+    """Return a short uptime string."""
+    boot_time = datetime.fromtimestamp(psutil.boot_time())
+    uptime_delta = datetime.now() - boot_time
+    days = uptime_delta.days
+    hours, remainder = divmod(uptime_delta.seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    return f"{days}d {hours}h {minutes}m"
+
+
+def get_scheduled_shutdown():
+    """Inspect systemd scheduled shutdown metadata."""
+    schedule_file = Path('/run/systemd/shutdown/scheduled')
+    if not schedule_file.exists():
+        return {'scheduled': False}
+
+    details = {'scheduled': True}
+    try:
+        content = schedule_file.read_text(encoding='utf-8', errors='replace')
+        for line in content.splitlines():
+            if '=' not in line:
+                continue
+            key, value = line.split('=', 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if key == 'mode':
+                details['mode'] = value
+            elif key == 'usec':
+                try:
+                    at_dt = datetime.fromtimestamp(int(value) / 1_000_000)
+                    details['at'] = at_dt.strftime('%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    pass
+    except Exception:
+        return {'scheduled': True}
+    return details
+
+
+def collect_dashboard_stats(cpu_interval=0.2):
+    """Collect dashboard metrics payload."""
+    cpu_percent = psutil.cpu_percent(interval=cpu_interval)
+    mem = psutil.virtual_memory()
+    disk = psutil.disk_usage('/')
+    load_avg = os.getloadavg()
+    scheduled_shutdown = get_scheduled_shutdown()
+
+    return {
+        'cpu_percent': round(cpu_percent, 1),
+        'mem_used': format_bytes(mem.used),
+        'mem_total': format_bytes(mem.total),
+        'mem_percent': round(mem.percent, 1),
+        'disk_used': format_bytes(disk.used),
+        'disk_total': format_bytes(disk.total),
+        'disk_percent': round(disk.percent, 1),
+        'uptime': format_uptime(),
+        'cpu_temp': get_cpu_temp(),
+        'load_avg': f"{load_avg[0]:.2f}, {load_avg[1]:.2f}, {load_avg[2]:.2f}",
+        'ssh_active': check_service('ssh'),
+        'panel_active': check_service('mini-control'),
+        'scheduled_shutdown': scheduled_shutdown,
+    }
+
+
 def load_git_updates(limit=500):
     """Load git commit history for the changelog page."""
     repo_root = Path(__file__).resolve().parent
@@ -156,6 +322,364 @@ def load_changelog_notes():
     except Exception:
         pass
     return ''
+
+
+CRON_LABEL_PREFIX = '# mini-control:'
+SPECIAL_CRON_EXPANSIONS = {
+    '@reboot': None,
+    '@hourly': '0 * * * *',
+    '@daily': '0 0 * * *',
+    '@weekly': '0 0 * * 0',
+    '@monthly': '0 0 1 * *',
+    '@yearly': '0 0 1 1 *',
+    '@annually': '0 0 1 1 *',
+}
+MONTH_NAME_MAP = {
+    'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4,
+    'may': 5, 'jun': 6, 'jul': 7, 'aug': 8,
+    'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12,
+}
+WEEKDAY_NAME_MAP = {
+    'sun': 0, 'mon': 1, 'tue': 2, 'wed': 3,
+    'thu': 4, 'fri': 5, 'sat': 6,
+}
+
+
+def parse_cron_value(token, minimum, maximum, name_map=None):
+    """Parse a cron field token into an integer."""
+    key = token.strip().lower()
+    if name_map and key in name_map:
+        value = name_map[key]
+    elif re.fullmatch(r'\d+', key):
+        value = int(key)
+    else:
+        raise ValueError('Invalid cron token')
+    if value < minimum or value > maximum:
+        raise ValueError('Cron token out of range')
+    return value
+
+
+def parse_cron_field(field, minimum, maximum, name_map=None):
+    """Parse a single cron field into a set of allowed values."""
+    field = field.strip().lower()
+    if not field:
+        raise ValueError('Empty cron field')
+
+    any_value = field == '*'
+    values = set()
+
+    for part in field.split(','):
+        part = part.strip()
+        if not part:
+            raise ValueError('Invalid cron list')
+
+        step = 1
+        base = part
+        if '/' in part:
+            base, step_raw = part.split('/', 1)
+            if not re.fullmatch(r'\d+', step_raw):
+                raise ValueError('Invalid cron step')
+            step = int(step_raw)
+            if step <= 0:
+                raise ValueError('Invalid cron step')
+
+        if base == '*':
+            start, end = minimum, maximum
+        elif '-' in base:
+            left, right = base.split('-', 1)
+            start = parse_cron_value(left, minimum, maximum, name_map)
+            end = parse_cron_value(right, minimum, maximum, name_map)
+            if start > end:
+                raise ValueError('Invalid cron range')
+        else:
+            value = parse_cron_value(base, minimum, maximum, name_map)
+            start, end = value, value
+
+        for value in range(start, end + 1, step):
+            values.add(value)
+
+    if maximum == 7 and 7 in values:
+        values.discard(7)
+        values.add(0)
+
+    return values, any_value
+
+
+def parse_standard_cron(schedule):
+    """Parse a 5-field cron expression."""
+    parts = schedule.split()
+    if len(parts) != 5:
+        return None
+
+    try:
+        minute_values, minute_any = parse_cron_field(parts[0], 0, 59)
+        hour_values, hour_any = parse_cron_field(parts[1], 0, 23)
+        dom_values, dom_any = parse_cron_field(parts[2], 1, 31)
+        month_values, month_any = parse_cron_field(parts[3], 1, 12, MONTH_NAME_MAP)
+        dow_values, dow_any = parse_cron_field(parts[4], 0, 7, WEEKDAY_NAME_MAP)
+    except ValueError:
+        return None
+
+    return {
+        'minute_values': minute_values,
+        'hour_values': hour_values,
+        'dom_values': dom_values,
+        'month_values': month_values,
+        'dow_values': dow_values,
+        'minute_any': minute_any,
+        'hour_any': hour_any,
+        'dom_any': dom_any,
+        'month_any': month_any,
+        'dow_any': dow_any,
+    }
+
+
+def normalize_cron_schedule(schedule):
+    """Expand special cron shorthands to 5-field format when applicable."""
+    schedule = schedule.strip().lower()
+    if schedule in SPECIAL_CRON_EXPANSIONS:
+        expanded = SPECIAL_CRON_EXPANSIONS[schedule]
+        return schedule, expanded
+    return schedule, schedule
+
+
+def is_valid_cron_schedule(schedule):
+    """Validate cron schedule string."""
+    schedule_key, expanded = normalize_cron_schedule(schedule)
+    if schedule_key == '@reboot':
+        return True
+    if not expanded:
+        return False
+    return parse_standard_cron(expanded) is not None
+
+
+def cron_matches(parsed, dt):
+    """Check whether parsed cron fields match a datetime."""
+    cron_dow = (dt.weekday() + 1) % 7  # Python Monday=0..Sunday=6 -> cron Sunday=0
+
+    if dt.minute not in parsed['minute_values']:
+        return False
+    if dt.hour not in parsed['hour_values']:
+        return False
+    if dt.month not in parsed['month_values']:
+        return False
+
+    dom_match = dt.day in parsed['dom_values']
+    dow_match = cron_dow in parsed['dow_values']
+
+    if parsed['dom_any'] and parsed['dow_any']:
+        return True
+    if parsed['dom_any']:
+        return dow_match
+    if parsed['dow_any']:
+        return dom_match
+    return dom_match or dow_match
+
+
+def get_next_cron_run(schedule, now=None):
+    """Calculate next run for a cron schedule."""
+    schedule_key, expanded = normalize_cron_schedule(schedule)
+    if schedule_key == '@reboot':
+        return None
+
+    parsed = parse_standard_cron(expanded)
+    if not parsed:
+        return None
+
+    now = now or datetime.now()
+    candidate = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+
+    max_checks = 366 * 24 * 60
+    for _ in range(max_checks):
+        if cron_matches(parsed, candidate):
+            return candidate
+        candidate += timedelta(minutes=1)
+    return None
+
+
+def parse_cron_job_line(stripped_line):
+    """Parse a crontab line into schedule + command if it is a job line."""
+    if not stripped_line or stripped_line.startswith('#'):
+        return None
+
+    if stripped_line.startswith('@'):
+        parts = stripped_line.split(None, 1)
+        if len(parts) == 2 and parts[0].lower() in SPECIAL_CRON_EXPANSIONS:
+            return {
+                'schedule': parts[0].lower(),
+                'command': parts[1].strip(),
+            }
+        return None
+
+    parts = stripped_line.split(None, 5)
+    if len(parts) < 6:
+        return None
+
+    schedule = ' '.join(parts[:5]).strip()
+    command = parts[5].strip()
+    if not command:
+        return None
+    if parse_standard_cron(schedule) is None:
+        return None
+
+    return {'schedule': schedule, 'command': command}
+
+
+def read_crontab_lines():
+    """Read current user crontab as list of lines."""
+    try:
+        result = subprocess.run(
+            ['crontab', '-l'],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False
+        )
+    except FileNotFoundError:
+        raise RuntimeError('crontab command not found')
+    except Exception as exc:
+        raise RuntimeError(str(exc))
+
+    if result.returncode != 0:
+        stderr = (result.stderr or '').strip()
+        if 'no crontab for' in stderr.lower():
+            return []
+        raise RuntimeError(stderr or 'Failed to read crontab')
+
+    return result.stdout.splitlines()
+
+
+def parse_crontab_entries(lines):
+    """Parse full crontab lines into editable entries while preserving raw lines."""
+    entries = []
+    pending_label = ''
+    job_id = 0
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.lower().startswith(CRON_LABEL_PREFIX):
+            pending_label = stripped[len(CRON_LABEL_PREFIX):].strip()
+            continue
+
+        parsed = parse_cron_job_line(stripped)
+        if parsed:
+            job_id += 1
+            entries.append({
+                'type': 'job',
+                'id': job_id,
+                'schedule': parsed['schedule'],
+                'command': parsed['command'],
+                'label': pending_label,
+            })
+            pending_label = ''
+            continue
+
+        if pending_label:
+            entries.append({'type': 'raw', 'line': f'{CRON_LABEL_PREFIX} {pending_label}'})
+            pending_label = ''
+
+        entries.append({'type': 'raw', 'line': line})
+
+    if pending_label:
+        entries.append({'type': 'raw', 'line': f'{CRON_LABEL_PREFIX} {pending_label}'})
+
+    return entries
+
+
+def render_crontab_entries(entries):
+    """Render entries back into crontab text."""
+    lines = []
+    for entry in entries:
+        if entry.get('type') == 'raw':
+            lines.append(entry.get('line', ''))
+            continue
+
+        label = (entry.get('label') or '').strip()
+        if label:
+            lines.append(f'{CRON_LABEL_PREFIX} {label}')
+        schedule = (entry.get('schedule') or '').strip()
+        command = (entry.get('command') or '').strip()
+        if schedule and command:
+            lines.append(f'{schedule} {command}')
+
+    if not lines:
+        return ''
+    return '\n'.join(lines).rstrip() + '\n'
+
+
+def write_crontab_entries(entries):
+    """Write entries to crontab."""
+    content = render_crontab_entries(entries)
+
+    if not content.strip():
+        result = subprocess.run(
+            ['crontab', '-r'],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False
+        )
+        if result.returncode != 0 and 'no crontab for' not in (result.stderr or '').lower():
+            raise RuntimeError((result.stderr or 'Failed to clear crontab').strip())
+        return
+
+    result = subprocess.run(
+        ['crontab', '-'],
+        input=content,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False
+    )
+    if result.returncode != 0:
+        raise RuntimeError((result.stderr or 'Failed to write crontab').strip())
+
+
+def load_scheduler_jobs():
+    """Load parsed scheduler jobs for UI display."""
+    lines = read_crontab_lines()
+    entries = parse_crontab_entries(lines)
+    jobs = []
+
+    for entry in entries:
+        if entry.get('type') != 'job':
+            continue
+
+        schedule = entry['schedule']
+        next_run = get_next_cron_run(schedule)
+        if schedule == '@reboot':
+            next_run_str = 'At reboot'
+        elif next_run is None:
+            next_run_str = 'N/A'
+        else:
+            next_run_str = next_run.strftime('%Y-%m-%d %H:%M')
+
+        jobs.append({
+            'id': entry['id'],
+            'label': entry.get('label', ''),
+            'schedule': schedule,
+            'command': entry['command'],
+            'next_run': next_run_str,
+        })
+
+    return entries, jobs, '\n'.join(lines)
+
+
+def sanitize_schedule_input(schedule):
+    """Normalize and validate schedule input."""
+    normalized = ' '.join(schedule.strip().split())
+    if not normalized:
+        return None, 'Schedule is required'
+
+    key, expanded = normalize_cron_schedule(normalized)
+    if key.startswith('@'):
+        normalized = key
+    else:
+        normalized = expanded
+
+    if not is_valid_cron_schedule(normalized):
+        return None, 'Invalid cron expression'
+    return normalized, None
 
 
 def get_cpu_temp():
@@ -205,60 +729,96 @@ def logout():
 @app.route('/')
 @login_required
 def dashboard():
-    cpu_percent = psutil.cpu_percent(interval=1)
-    mem = psutil.virtual_memory()
-    disk = psutil.disk_usage('/')
-    boot_time = datetime.fromtimestamp(psutil.boot_time())
-    uptime_delta = datetime.now() - boot_time
-    days = uptime_delta.days
-    hours, remainder = divmod(uptime_delta.seconds, 3600)
-    minutes, _ = divmod(remainder, 60)
-    uptime_str = f"{days}d {hours}h {minutes}m"
-    load_avg = os.getloadavg()
-
-    return render_template('dashboard.html',
-        cpu_percent=cpu_percent,
-        mem_total=format_bytes(mem.total),
-        mem_used=format_bytes(mem.used),
-        mem_percent=mem.percent,
-        disk_total=format_bytes(disk.total),
-        disk_used=format_bytes(disk.used),
-        disk_percent=disk.percent,
-        uptime=uptime_str,
-        cpu_temp=get_cpu_temp(),
-        load_avg=f"{load_avg[0]:.2f}, {load_avg[1]:.2f}, {load_avg[2]:.2f}",
-        ssh_active=check_service('ssh'),
-        panel_active=check_service('mini-control'),
-    )
+    stats = collect_dashboard_stats(cpu_interval=0.4)
+    return render_template('dashboard.html', **stats)
 
 
 @app.route('/api/dashboard')
 @login_required
 def api_dashboard():
-    cpu_percent = psutil.cpu_percent(interval=0.5)
-    mem = psutil.virtual_memory()
-    disk = psutil.disk_usage('/')
-    boot_time = datetime.fromtimestamp(psutil.boot_time())
-    uptime_delta = datetime.now() - boot_time
-    days = uptime_delta.days
-    hours, remainder = divmod(uptime_delta.seconds, 3600)
-    minutes, _ = divmod(remainder, 60)
-    load_avg = os.getloadavg()
+    # Backward-compatible endpoint for older frontend code.
+    return api_stats()
+
+
+@app.route('/api/stats')
+@login_required
+def api_stats():
+    return jsonify(collect_dashboard_stats(cpu_interval=0.2))
+
+
+@app.route('/api/history')
+@login_required
+def api_history():
+    with HISTORY_LOCK:
+        return jsonify({
+            'cpu_history': list(CPU_HISTORY),
+            'ram_history': list(RAM_HISTORY),
+            'disk_io_history': list(DISK_IO_HISTORY),
+            'net_history': list(NET_HISTORY),
+        })
+
+
+@app.route('/api/power/reboot', methods=['POST'])
+@login_required
+def api_power_reboot():
+    stdout, stderr, rc = run_cmd('sudo /sbin/reboot', timeout=10)
+    if rc != 0:
+        stdout, stderr, rc = run_cmd('sudo reboot', timeout=10)
+    if rc != 0:
+        return jsonify({'error': stderr or 'Failed to trigger reboot'}), 500
+    return jsonify({'status': 'ok', 'message': stdout or 'Reboot command sent'})
+
+
+@app.route('/api/power/shutdown', methods=['POST'])
+@login_required
+def api_power_shutdown():
+    stdout, stderr, rc = run_cmd('sudo /sbin/shutdown -h now', timeout=10)
+    if rc != 0:
+        stdout, stderr, rc = run_cmd('sudo shutdown -h now', timeout=10)
+    if rc != 0:
+        return jsonify({'error': stderr or 'Failed to trigger shutdown'}), 500
+    return jsonify({'status': 'ok', 'message': stdout or 'Shutdown command sent'})
+
+
+@app.route('/api/power/schedule', methods=['POST'])
+@login_required
+def api_power_schedule():
+    data = request.get_json(silent=True) or {}
+    minutes_raw = str(data.get('minutes', '')).strip()
+    if not minutes_raw.isdigit():
+        return jsonify({'error': 'Minutes must be a positive integer'}), 400
+
+    minutes = int(minutes_raw)
+    if minutes < 1 or minutes > 7 * 24 * 60:
+        return jsonify({'error': 'Minutes must be between 1 and 10080'}), 400
+
+    stdout, stderr, rc = run_cmd(f'sudo /sbin/shutdown -r +{minutes}', timeout=10)
+    if rc != 0:
+        stdout, stderr, rc = run_cmd(f'sudo shutdown -r +{minutes}', timeout=10)
+    if rc != 0:
+        return jsonify({'error': stderr or 'Failed to schedule reboot'}), 500
 
     return jsonify({
-        'cpu_percent': cpu_percent,
-        'mem_used': format_bytes(mem.used),
-        'mem_total': format_bytes(mem.total),
-        'mem_percent': mem.percent,
-        'disk_used': format_bytes(disk.used),
-        'disk_total': format_bytes(disk.total),
-        'disk_percent': disk.percent,
-        'uptime': f"{days}d {hours}h {minutes}m",
-        'cpu_temp': get_cpu_temp(),
-        'load_avg': f"{load_avg[0]:.2f}, {load_avg[1]:.2f}, {load_avg[2]:.2f}",
-        'ssh_active': check_service('ssh'),
-        'panel_active': check_service('mini-control'),
+        'status': 'ok',
+        'message': stdout or f'Reboot scheduled in {minutes} minute(s)',
+        'scheduled_shutdown': get_scheduled_shutdown(),
     })
+
+
+@app.route('/api/power/cancel', methods=['POST'])
+@login_required
+def api_power_cancel():
+    stdout, stderr, rc = run_cmd('sudo /sbin/shutdown -c', timeout=10)
+    if rc != 0:
+        stdout, stderr, rc = run_cmd('sudo shutdown -c', timeout=10)
+    if rc != 0:
+        return jsonify({'error': stderr or 'Failed to cancel shutdown'}), 500
+    return jsonify({'status': 'ok', 'message': stdout or 'Scheduled shutdown cancelled'})
+
+
+@app.route('/api/power/ping')
+def api_power_ping():
+    return jsonify({'online': True, 'ts': int(time.time())})
 
 
 # --- Service Manager ---
@@ -419,7 +979,8 @@ def create_folder(subpath=''):
     if not target_dir.is_dir():
         return jsonify({'error': 'Not a directory'}), 400
 
-    name = request.json.get('name', '').strip()
+    data = request.get_json(silent=True) or {}
+    name = str(data.get('name', '')).strip()
     err = validate_new_entry_name(name)
     if err:
         return jsonify({'error': err}), 400
@@ -450,8 +1011,9 @@ def create_file(subpath=''):
     if not target_dir.is_dir():
         return jsonify({'error': 'Not a directory'}), 400
 
-    name = request.json.get('name', '').strip()
-    content = request.json.get('content', '')
+    data = request.get_json(silent=True) or {}
+    name = str(data.get('name', '')).strip()
+    content = data.get('content', '')
     err = validate_new_entry_name(name)
     if err:
         return jsonify({'error': err}), 400
@@ -1076,6 +1638,127 @@ def package_remove():
     return jsonify({'output': output, 'success': rc == 0})
 
 
+# --- Scheduler ---
+
+@app.route('/scheduler')
+@login_required
+def scheduler():
+    try:
+        _, jobs, raw_crontab = load_scheduler_jobs()
+    except RuntimeError as exc:
+        flash(str(exc), 'error')
+        jobs = []
+        raw_crontab = ''
+
+    return render_template(
+        'scheduler.html',
+        jobs=jobs,
+        raw_crontab=raw_crontab,
+    )
+
+
+@app.route('/scheduler/add', methods=['POST'])
+@login_required
+def scheduler_add():
+    data = request_payload()
+    schedule_raw = str(data.get('schedule', '')).strip()
+    command = str(data.get('command', '')).strip()
+    label = str(data.get('label', '')).strip().replace('\n', ' ').replace('\r', ' ')
+
+    if not command:
+        return jsonify({'error': 'Command is required'}), 400
+
+    schedule, err = sanitize_schedule_input(schedule_raw)
+    if err:
+        return jsonify({'error': err}), 400
+
+    try:
+        entries = parse_crontab_entries(read_crontab_lines())
+        entries.append({
+            'type': 'job',
+            'schedule': schedule,
+            'command': command,
+            'label': label,
+        })
+        write_crontab_entries(entries)
+    except RuntimeError as exc:
+        return jsonify({'error': str(exc)}), 500
+
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/scheduler/edit', methods=['POST'])
+@login_required
+def scheduler_edit():
+    data = request_payload()
+    job_id_raw = str(data.get('job_id', '')).strip()
+    schedule_raw = str(data.get('schedule', '')).strip()
+    command = str(data.get('command', '')).strip()
+    label = str(data.get('label', '')).strip().replace('\n', ' ').replace('\r', ' ')
+
+    if not job_id_raw.isdigit():
+        return jsonify({'error': 'Invalid job id'}), 400
+    if not command:
+        return jsonify({'error': 'Command is required'}), 400
+
+    schedule, err = sanitize_schedule_input(schedule_raw)
+    if err:
+        return jsonify({'error': err}), 400
+
+    job_id = int(job_id_raw)
+
+    try:
+        entries = parse_crontab_entries(read_crontab_lines())
+        found = False
+        for entry in entries:
+            if entry.get('type') == 'job' and entry.get('id') == job_id:
+                entry['schedule'] = schedule
+                entry['command'] = command
+                entry['label'] = label
+                found = True
+                break
+
+        if not found:
+            return jsonify({'error': 'Job not found'}), 404
+
+        write_crontab_entries(entries)
+    except RuntimeError as exc:
+        return jsonify({'error': str(exc)}), 500
+
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/scheduler/delete', methods=['POST'])
+@login_required
+def scheduler_delete():
+    data = request_payload()
+    job_id_raw = str(data.get('job_id', '')).strip()
+
+    if not job_id_raw.isdigit():
+        return jsonify({'error': 'Invalid job id'}), 400
+
+    job_id = int(job_id_raw)
+
+    try:
+        entries = parse_crontab_entries(read_crontab_lines())
+        kept = []
+        found = False
+        for entry in entries:
+            if entry.get('type') == 'job' and entry.get('id') == job_id:
+                found = True
+                continue
+            kept.append(entry)
+
+        if not found:
+            return jsonify({'error': 'Job not found'}), 404
+
+        write_crontab_entries(kept)
+    except RuntimeError as exc:
+        return jsonify({'error': str(exc)}), 500
+
+    return jsonify({'status': 'ok'})
+
+
 # --- Logs Viewer ---
 
 @app.route('/logs')
@@ -1136,4 +1819,5 @@ def api_logs_download():
 # --- Main ---
 
 if __name__ == '__main__':
+    start_stats_collector()
     app.run(host=config.HOST, port=config.PORT, debug=config.DEBUG)

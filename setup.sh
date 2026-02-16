@@ -23,7 +23,7 @@ echo "[4/5] Enabling and starting the service..."
 sudo systemctl enable mini-control.service
 sudo systemctl start mini-control.service
 
-# Configure sudoers for service management (no password for systemctl and apt)
+# Configure sudoers for service management (no password for systemctl, apt, power actions)
 echo "[5/5] Configuring sudo permissions for panel..."
 SUDOERS_FILE="/etc/sudoers.d/mini-control"
 if [ ! -f "$SUDOERS_FILE" ]; then
@@ -35,6 +35,8 @@ ludovic ALL=(ALL) NOPASSWD: /usr/bin/apt-get install *
 ludovic ALL=(ALL) NOPASSWD: /usr/bin/apt-get remove *
 ludovic ALL=(ALL) NOPASSWD: /usr/bin/tee *
 ludovic ALL=(ALL) NOPASSWD: /usr/bin/cat *
+ludovic ALL=(ALL) NOPASSWD: /sbin/reboot
+ludovic ALL=(ALL) NOPASSWD: /sbin/shutdown *
 SUDOERS
     sudo chmod 0440 "$SUDOERS_FILE"
     echo "  Sudoers file created at $SUDOERS_FILE"
