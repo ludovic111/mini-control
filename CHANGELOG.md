@@ -15,6 +15,9 @@ All notable updates to Mini Control are listed here.
 ### Improved
 - Logs page auto-loads on open and supports Enter key in filter input.
 - README feature list and deployment docs refreshed.
+- Dashboard history storage now uses compact tuple/deque samples (30-minute window, integer values).
+- Flask/session defaults tuned for lower memory footprint (`SESSION_PERMANENT=false`, static cache max-age).
+- Service runtime switched to gunicorn with memory guardrails and reduced Python buffering/bytecode writes.
 
 ## 2026-02-16 (Monitoring + Scheduler Update)
 

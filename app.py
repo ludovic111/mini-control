@@ -7,15 +7,16 @@ import os
 import re
 import secrets
 import shlex
-import subprocess
+import gc
+import socket
 import threading
 import time
+from collections import deque
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
 import psutil
-import requests as http_requests
 from flask import (
     Flask, render_template, request, redirect, url_for,
     session, jsonify, send_file, flash, abort, Response, send_from_directory
@@ -29,18 +30,28 @@ app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024 * 1024  # 10GB uploads for m
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_SECURE'] = False
+app.config['SESSION_PERMANENT'] = False
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 300
 
-HISTORY_LIMIT = 720  # 60 minutes @ 5-second samples
+HISTORY_LIMIT = 360  # 30 minutes @ 5-second samples
 STATS_INTERVAL = 5
+AI_HISTORY_LIMIT = 10
 
-CPU_HISTORY = []
-RAM_HISTORY = []
-DISK_IO_HISTORY = []
-NET_HISTORY = []
+CPU_HISTORY = deque(maxlen=HISTORY_LIMIT)
+RAM_HISTORY = deque(maxlen=HISTORY_LIMIT)
+DISK_IO_HISTORY = deque(maxlen=HISTORY_LIMIT)
+NET_HISTORY = deque(maxlen=HISTORY_LIMIT)
 
 HISTORY_LOCK = threading.Lock()
 STATS_THREAD_LOCK = threading.Lock()
 STATS_THREAD_STARTED = False
+
+AI_HISTORY_SESSION_KEYS = (
+    'ai_history',
+    'assistant_history',
+    'ai_messages',
+    'assistant_messages',
+)
 
 MOVIES_ROOT = Path('/home/ludovic/movies')
 MOVIE_METADATA_CACHE_FILE = MOVIES_ROOT / '.metadata_cache.json'
@@ -59,6 +70,8 @@ MOVIE_NOISE_TOKENS = {
 MOVIE_YEAR_RE = re.compile(r'(?<!\d)(19\d{2}|20\d{2})(?!\d)')
 
 MOVIE_CACHE_LOCK = threading.Lock()
+_SUBPROCESS_MODULE = None
+_REQUESTS_MODULE = None
 
 LOGIN_ATTEMPTS = {}
 LOGIN_ATTEMPTS_LOCK = threading.Lock()
@@ -84,11 +97,70 @@ def parse_allowed_networks(raw_value):
 ALLOWED_NETWORKS = parse_allowed_networks(config.ALLOWED_SUBNETS)
 
 
-def append_capped(history, entry):
-    """Append a history entry and keep only the latest HISTORY_LIMIT points."""
-    history.append(entry)
-    if len(history) > HISTORY_LIMIT:
-        del history[:-HISTORY_LIMIT]
+def clamp_chart_value(value):
+    """Convert metric value to an integer in [0, 100] for compact chart storage."""
+    try:
+        normalized = int(round(float(value)))
+    except (TypeError, ValueError):
+        return 0
+    if normalized < 0:
+        return 0
+    if normalized > 100:
+        return 100
+    return normalized
+
+
+def get_subprocess_module():
+    """Lazily import subprocess only when command execution is needed."""
+    global _SUBPROCESS_MODULE
+    if _SUBPROCESS_MODULE is None:
+        import subprocess as subprocess_module
+        _SUBPROCESS_MODULE = subprocess_module
+    return _SUBPROCESS_MODULE
+
+
+def get_requests_module():
+    """Lazily import requests only for OMDb metadata requests."""
+    global _REQUESTS_MODULE
+    if _REQUESTS_MODULE is None:
+        import requests as requests_module
+        _REQUESTS_MODULE = requests_module
+    return _REQUESTS_MODULE
+
+
+def load_static_system_info():
+    """Capture host information that rarely changes so requests stay lightweight."""
+    info = {
+        'hostname': socket.gethostname(),
+        'cpu_count': int(os.cpu_count() or 1),
+        'mem_total': 0,
+        'disk_total': 0,
+        'boot_time_ts': int(time.time()),
+    }
+    try:
+        info['cpu_count'] = int(psutil.cpu_count(logical=True) or info['cpu_count'])
+    except Exception:
+        pass
+    try:
+        info['mem_total'] = int(psutil.virtual_memory().total)
+    except Exception:
+        pass
+    try:
+        info['disk_total'] = int(psutil.disk_usage('/').total)
+    except Exception:
+        pass
+    try:
+        info['boot_time_ts'] = int(psutil.boot_time())
+    except Exception:
+        pass
+    try:
+        psutil.cpu_percent(interval=None)  # warm-up call for non-blocking next reading
+    except Exception:
+        pass
+    return info
+
+
+STATIC_SYSTEM_INFO = load_static_system_info()
 
 
 def stats_collector_loop():
@@ -102,13 +174,17 @@ def stats_collector_loop():
         loop_started = time.time()
         now_ts = int(loop_started)
 
-        cpu_percent = round(psutil.cpu_percent(interval=None), 2)
-        ram_percent = round(psutil.virtual_memory().percent, 2)
+        cpu_percent = clamp_chart_value(psutil.cpu_percent(interval=None))
+        ram_percent = 0
+        try:
+            ram_percent = clamp_chart_value(psutil.virtual_memory().percent)
+        except Exception:
+            ram_percent = 0
 
-        disk_read_mb_s = 0.0
-        disk_write_mb_s = 0.0
-        net_recv_mb_s = 0.0
-        net_sent_mb_s = 0.0
+        disk_read_value = 0
+        disk_write_value = 0
+        net_recv_value = 0
+        net_sent_value = 0
 
         disk_now = psutil.disk_io_counters()
         net_now = psutil.net_io_counters()
@@ -117,24 +193,20 @@ def stats_collector_loop():
         if prev_disk and disk_now:
             disk_read_mb_s = max(disk_now.read_bytes - prev_disk.read_bytes, 0) / (1024 * 1024) / elapsed
             disk_write_mb_s = max(disk_now.write_bytes - prev_disk.write_bytes, 0) / (1024 * 1024) / elapsed
+            disk_read_value = clamp_chart_value(disk_read_mb_s)
+            disk_write_value = clamp_chart_value(disk_write_mb_s)
 
         if prev_net and net_now:
             net_recv_mb_s = max(net_now.bytes_recv - prev_net.bytes_recv, 0) / (1024 * 1024) / elapsed
             net_sent_mb_s = max(net_now.bytes_sent - prev_net.bytes_sent, 0) / (1024 * 1024) / elapsed
+            net_recv_value = clamp_chart_value(net_recv_mb_s)
+            net_sent_value = clamp_chart_value(net_sent_mb_s)
 
         with HISTORY_LOCK:
-            append_capped(CPU_HISTORY, {'time': now_ts, 'value': cpu_percent})
-            append_capped(RAM_HISTORY, {'time': now_ts, 'value': ram_percent})
-            append_capped(DISK_IO_HISTORY, {
-                'time': now_ts,
-                'read': round(disk_read_mb_s, 3),
-                'write': round(disk_write_mb_s, 3),
-            })
-            append_capped(NET_HISTORY, {
-                'time': now_ts,
-                'recv': round(net_recv_mb_s, 3),
-                'sent': round(net_sent_mb_s, 3),
-            })
+            CPU_HISTORY.append((now_ts, cpu_percent))
+            RAM_HISTORY.append((now_ts, ram_percent))
+            DISK_IO_HISTORY.append((now_ts, disk_read_value, disk_write_value))
+            NET_HISTORY.append((now_ts, net_recv_value, net_sent_value))
 
         prev_ts = loop_started
         prev_disk = disk_now
@@ -305,6 +377,9 @@ def add_security_headers(response):
     response.headers.setdefault('X-Frame-Options', 'DENY')
     response.headers.setdefault('X-Content-Type-Options', 'nosniff')
     response.headers.setdefault('Referrer-Policy', 'same-origin')
+    if request.endpoint == 'static':
+        max_age = int(app.config.get('SEND_FILE_MAX_AGE_DEFAULT', 300) or 300)
+        response.headers['Cache-Control'] = f'public, max-age={max_age}'
     return response
 
 
@@ -340,6 +415,19 @@ def ensure_background_workers():
     start_stats_collector()
 
 
+@app.before_request
+def enforce_ai_session_history_limit():
+    """Cap AI message history in session storage to prevent unbounded growth."""
+    trimmed = False
+    for key in AI_HISTORY_SESSION_KEYS:
+        value = session.get(key)
+        if isinstance(value, list) and len(value) > AI_HISTORY_LIMIT:
+            session[key] = value[-AI_HISTORY_LIMIT:]
+            trimmed = True
+    if trimmed:
+        session.modified = True
+
+
 @app.errorhandler(413)
 def payload_too_large(_error):
     """Return a friendly error when upload size exceeds MAX_CONTENT_LENGTH."""
@@ -352,6 +440,7 @@ def payload_too_large(_error):
 
 def run_cmd(cmd, timeout=30, shell=True):
     """Run a shell command and return (stdout, stderr, returncode)."""
+    subprocess = get_subprocess_module()
     try:
         result = subprocess.run(
             cmd, shell=shell, capture_output=True, text=True, timeout=timeout
@@ -426,12 +515,13 @@ def build_logs_cmd(source, lines, grep_filter=''):
     return cmd, None
 
 
-def format_uptime():
-    """Return a short uptime string."""
-    boot_time = datetime.fromtimestamp(psutil.boot_time())
-    uptime_delta = datetime.now() - boot_time
-    days = uptime_delta.days
-    hours, remainder = divmod(uptime_delta.seconds, 3600)
+def format_uptime(now_ts=None):
+    """Return a short uptime string using cached boot timestamp."""
+    current_ts = int(now_ts or time.time())
+    boot_ts = int(STATIC_SYSTEM_INFO.get('boot_time_ts') or current_ts)
+    uptime_seconds = max(current_ts - boot_ts, 0)
+    days, remainder = divmod(uptime_seconds, 24 * 3600)
+    hours, remainder = divmod(remainder, 3600)
     minutes, _ = divmod(remainder, 60)
     return f"{days}d {hours}h {minutes}m"
 
@@ -464,25 +554,89 @@ def get_scheduled_shutdown():
     return details
 
 
+def collect_dynamic_system_info():
+    """Collect changing dashboard metrics in one code path per refresh."""
+    cpu_percent = 0
+    mem_percent = 0
+    mem_used = 0
+    disk_percent = 0
+    disk_used = 0
+    has_cpu_sample = False
+    has_mem_sample = False
+    mem_total = int(STATIC_SYSTEM_INFO.get('mem_total') or 0)
+
+    with HISTORY_LOCK:
+        if CPU_HISTORY:
+            cpu_percent = int(CPU_HISTORY[-1][1])
+            has_cpu_sample = True
+        if RAM_HISTORY:
+            mem_percent = int(RAM_HISTORY[-1][1])
+            has_mem_sample = True
+
+    if not has_cpu_sample:
+        try:
+            cpu_percent = clamp_chart_value(psutil.cpu_percent(interval=None))
+        except Exception:
+            pass
+
+    if has_mem_sample and mem_total > 0:
+        mem_used = int(mem_total * (mem_percent / 100.0))
+    else:
+        try:
+            mem = psutil.virtual_memory()
+            mem_percent = clamp_chart_value(mem.percent)
+            mem_used = int(mem.used)
+        except Exception:
+            pass
+    try:
+        disk = psutil.disk_usage('/')
+        disk_percent = clamp_chart_value(disk.percent)
+        disk_used = int(disk.used)
+    except Exception:
+        pass
+    try:
+        load_avg = os.getloadavg()
+    except Exception:
+        load_avg = (0.0, 0.0, 0.0)
+    return {
+        'cpu_percent': cpu_percent,
+        'mem_percent': mem_percent,
+        'mem_used': mem_used,
+        'disk_percent': disk_percent,
+        'disk_used': disk_used,
+        'load_avg': load_avg,
+        'cpu_temp': get_cpu_temp(),
+    }
+
+
 def collect_dashboard_stats(cpu_interval=0.2):
     """Collect dashboard metrics payload."""
-    cpu_percent = psutil.cpu_percent(interval=cpu_interval)
-    mem = psutil.virtual_memory()
-    disk = psutil.disk_usage('/')
-    load_avg = os.getloadavg()
+    # Kept for API compatibility with old callers; we always use non-blocking CPU sampling.
+    _ = cpu_interval
+    dynamic = collect_dynamic_system_info()
+    mem_total = int(STATIC_SYSTEM_INFO.get('mem_total') or 0)
+    disk_total = int(STATIC_SYSTEM_INFO.get('disk_total') or 0)
+    if mem_total <= 0:
+        mem_total = int(dynamic['mem_used'])
+    if disk_total <= 0:
+        disk_total = int(dynamic['disk_used'])
     scheduled_shutdown = get_scheduled_shutdown()
 
     return {
-        'cpu_percent': round(cpu_percent, 1),
-        'mem_used': format_bytes(mem.used),
-        'mem_total': format_bytes(mem.total),
-        'mem_percent': round(mem.percent, 1),
-        'disk_used': format_bytes(disk.used),
-        'disk_total': format_bytes(disk.total),
-        'disk_percent': round(disk.percent, 1),
+        'cpu_percent': dynamic['cpu_percent'],
+        'mem_used': format_bytes(dynamic['mem_used']),
+        'mem_total': format_bytes(mem_total),
+        'mem_percent': dynamic['mem_percent'],
+        'disk_used': format_bytes(dynamic['disk_used']),
+        'disk_total': format_bytes(disk_total),
+        'disk_percent': dynamic['disk_percent'],
         'uptime': format_uptime(),
-        'cpu_temp': get_cpu_temp(),
-        'load_avg': f"{load_avg[0]:.2f}, {load_avg[1]:.2f}, {load_avg[2]:.2f}",
+        'cpu_temp': dynamic['cpu_temp'],
+        'load_avg': (
+            f"{dynamic['load_avg'][0]:.2f}, "
+            f"{dynamic['load_avg'][1]:.2f}, "
+            f"{dynamic['load_avg'][2]:.2f}"
+        ),
         'ssh_active': check_service('ssh'),
         'panel_active': check_service('mini-control'),
         'scheduled_shutdown': scheduled_shutdown,
@@ -493,6 +647,7 @@ def load_git_updates(limit=500):
     """Load git commit history for the changelog page."""
     repo_root = Path(__file__).resolve().parent
     commits = []
+    subprocess = get_subprocess_module()
     try:
         result = subprocess.run(
             [
@@ -740,6 +895,7 @@ def parse_cron_job_line(stripped_line):
 
 def read_crontab_lines():
     """Read current user crontab as list of lines."""
+    subprocess = get_subprocess_module()
     try:
         result = subprocess.run(
             ['crontab', '-l'],
@@ -823,6 +979,7 @@ def render_crontab_entries(entries):
 def write_crontab_entries(entries):
     """Write entries to crontab."""
     content = render_crontab_entries(entries)
+    subprocess = get_subprocess_module()
 
     if not content.strip():
         result = subprocess.run(
@@ -1108,6 +1265,11 @@ def omdb_request(params=None):
     request_params['apikey'] = api_key
 
     try:
+        http_requests = get_requests_module()
+    except Exception as exc:
+        return None, f'Python requests module is unavailable: {exc}'
+
+    try:
         response = http_requests.get(OMDB_API_BASE, params=request_params, timeout=15)
     except http_requests.RequestException as exc:
         return None, f'OMDb request failed: {exc}'
@@ -1313,6 +1475,8 @@ def load_movies_index():
             cache['updated_at'] = datetime.now().isoformat(timespec='seconds')
             save_movie_metadata_cache(cache)
 
+    if len(movies) >= 100:
+        gc.collect()
     return movies
 
 
@@ -1405,11 +1569,15 @@ def api_stats():
 @login_required
 def api_history():
     with HISTORY_LOCK:
+        cpu_history = [{'time': ts, 'value': value} for ts, value in CPU_HISTORY]
+        ram_history = [{'time': ts, 'value': value} for ts, value in RAM_HISTORY]
+        disk_history = [{'time': ts, 'read': read, 'write': write} for ts, read, write in DISK_IO_HISTORY]
+        net_history = [{'time': ts, 'recv': recv, 'sent': sent} for ts, recv, sent in NET_HISTORY]
         return jsonify({
-            'cpu_history': list(CPU_HISTORY),
-            'ram_history': list(RAM_HISTORY),
-            'disk_io_history': list(DISK_IO_HISTORY),
-            'net_history': list(NET_HISTORY),
+            'cpu_history': cpu_history,
+            'ram_history': ram_history,
+            'disk_io_history': disk_history,
+            'net_history': net_history,
         })
 
 
@@ -1991,6 +2159,8 @@ def packages_installed():
         parts = line.split(None, 2)
         if len(parts) >= 2:
             packages.append({'name': parts[0], 'version': parts[1]})
+    if len(packages) >= 100:
+        gc.collect()
     return jsonify({'packages': packages})
 
 

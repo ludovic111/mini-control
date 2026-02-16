@@ -17,7 +17,7 @@ sudo chmod 775 /home/ludovic/movies
 
 # Install pip packages
 echo "[3/5] Installing Python packages..."
-pip install flask psutil requests --break-system-packages
+pip install -r requirements.txt --break-system-packages
 
 # Copy systemd service file
 echo "[4/5] Installing systemd service..."

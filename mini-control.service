@@ -5,9 +5,12 @@ After=network.target
 [Service]
 User=ludovic
 WorkingDirectory=/home/ludovic/mini-control
-ExecStart=/usr/bin/python3 /home/ludovic/mini-control/app.py
+ExecStart=/home/ludovic/.local/bin/gunicorn --workers 1 --threads 2 --preload -b 0.0.0.0:5000 app:app
 Restart=on-failure
 Environment=PATH=/home/ludovic/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+MemoryMax=150M
 
 [Install]
 WantedBy=multi-user.target
