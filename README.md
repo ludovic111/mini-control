@@ -113,8 +113,6 @@ Environment variables:
 - `FILE_ROOT` - Root directory for file manager (default: `/home/ludovic`)
 - `PANEL_ALLOWED_SUBNETS` - Comma-separated CIDR allowlist (default private LAN ranges)
 - `ENABLE_WEB_TERMINAL` - `true/false` (default `false`)
-- `ENABLE_ASSISTANT_EXEC` - `true/false` (default `false`)
-- `ENABLE_ASSISTANT_FILE_EDITOR` - `true/false` (default `false`)
 
 ## Security Notes
 
@@ -123,8 +121,7 @@ Environment variables:
 - Access is restricted to private/loopback subnets by default
 - CSRF protection is enabled for state-changing requests
 - Sudo permissions are limited to systemctl and apt-get operations
-- Assistant file read/write does not use sudo and is restricted to `FILE_ROOT`
-- Web terminal, assistant command execution, and assistant file editor are disabled by default (opt-in via env vars)
+- Web terminal is disabled by default (opt-in via env var)
 - File manager is restricted to `/home/ludovic`
 - For Power actions, add sudoers rules:
   - `ludovic ALL=(ALL) NOPASSWD: /sbin/reboot`
